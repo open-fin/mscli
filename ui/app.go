@@ -2918,11 +2918,27 @@ func displayToolName(name string) string {
 	case "load_skill":
 		return "Skill"
 	default:
+		if server, tool, ok := splitMCPToolName(name); ok {
+			return server + " - " + tool + " (MCP)"
+		}
 		if name == "" {
 			return "Tool"
 		}
 		return name
 	}
+}
+
+func splitMCPToolName(name string) (string, string, bool) {
+	name = strings.TrimSpace(name)
+	const prefix = "mcp__"
+	if !strings.HasPrefix(name, prefix) {
+		return "", "", false
+	}
+	parts := strings.SplitN(strings.TrimPrefix(name, prefix), "__", 2)
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
 }
 
 func replayToolMessage(ev model.Event) model.Message {

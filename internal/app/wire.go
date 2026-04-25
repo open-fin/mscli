@@ -22,6 +22,7 @@ import (
 	itrain "gitcode.com/mindspore/mscli/internal/train"
 	"gitcode.com/mindspore/mscli/internal/version"
 	"gitcode.com/mindspore/mscli/permission"
+	runtimemcp "gitcode.com/mindspore/mscli/runtime/mcp"
 	rshell "gitcode.com/mindspore/mscli/runtime/shell"
 	"gitcode.com/mindspore/mscli/tools"
 	askuserquestion "gitcode.com/mindspore/mscli/tools/ask_user_question"
@@ -56,6 +57,7 @@ type Application struct {
 	permissionUI            *PermissionPromptUI
 	questionUI              *AskUserQuestionPromptUI
 	permissionSettingsIssue *permissionSettingsIssue
+	mcpManager              runtimemcp.Manager
 	session                 *session.Session
 	replayBacklog           []model.Event
 	replayTimeline          []session.ReplayFrame
@@ -104,15 +106,16 @@ type Application struct {
 
 // BootstrapConfig holds bootstrap configuration.
 type BootstrapConfig struct {
-	URL             string
-	Model           string
-	Key             string
-	Debug           bool
-	Resume          bool
-	ResumeSessionID string
-	Replay          bool
-	ReplaySessionID string
-	ReplaySpeed     float64
+	URL                 string
+	Model               string
+	Key                 string
+	Debug               bool
+	Resume              bool
+	ResumeSessionID     string
+	Replay              bool
+	ReplaySessionID     string
+	ReplaySpeed         float64
+	MCPApprovalPrompter MCPApprovalPrompter
 }
 
 // Wire builds and returns the Application.
@@ -180,6 +183,10 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 	}
 
 	toolRegistry := initTools(config, workDir)
+	mcpManager, mcpErr := initMCPTools(context.Background(), toolRegistry, workDir, time.Duration(config.Execution.TimeoutSec)*time.Second, eventCh, cfg.MCPApprovalPrompter)
+	if mcpErr != nil {
+		eventCh <- model.Event{Type: model.ToolWarning, ToolName: "mcp", Message: mcpErr.Error()}
+	}
 
 	// Skills: embedded skills are extracted next to the executable,
 	// user-installed skills in ~/.mscli/skills/ override them,
@@ -345,6 +352,7 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 		permissionUI:            permissionUI,
 		questionUI:              questionUI,
 		permissionSettingsIssue: permSettingsIssue,
+		mcpManager:              mcpManager,
 		session:                 runtimeSession,
 		replayBacklog:           replayBacklog,
 		replayTimeline:          replayTimeline,

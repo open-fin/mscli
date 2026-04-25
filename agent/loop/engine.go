@@ -975,6 +975,7 @@ You have access to the following tools:
 - shell: Execute shell commands
 - AskUserQuestion: Ask the user clarifying multiple-choice questions
 - load_skill: Load a skill's detailed instructions. Call this when the user's task matches an available skill listed below.
+- mcp__<server>__<tool>: Additional MCP tools may be available when configured and approved.
 
 Guidelines:
 1. Use tools to gather information before making changes
@@ -988,6 +989,7 @@ Guidelines:
 9. When a user asks to migrate or port a model, load migrate-agent.
 10. If you are blocked on user preferences, ambiguous requirements, or implementation choices, use AskUserQuestion instead of guessing.
 11. When using AskUserQuestion, pass one to four concrete options and never add an explicit Other or manual-input option because the UI already provides a built-in custom-input path.
+12. Additional MCP tools may be available with names beginning mcp__; use them only when their descriptions match the task.
 
 IMPORTANT: When you have gathered enough information to answer the user's question, you MUST provide your final answer directly WITHOUT using any more tools. Do not keep calling tools indefinitely - provide a clear, concise response once you have the information needed.
 

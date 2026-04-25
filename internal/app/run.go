@@ -91,6 +91,9 @@ func Run(args []string) error {
 		_, err := io.WriteString(cliStdout, renderBootstrapHelp(bootstrapHelpTopicRoot))
 		return err
 	}
+	if len(args) > 0 && args[0] == "mcp" {
+		return runMCPCLI(args[1:], os.Stdout, os.Stderr)
+	}
 
 	cfg, err := parseBootstrapConfig(args)
 	if err != nil {
@@ -118,13 +121,25 @@ func (a *Application) run() error {
 	}
 	err := a.runReal()
 	resumeHint := a.exitResumeHint()
-	if a.session != nil {
-		_ = a.session.Close()
-	}
+	a.closeRuntimeResources()
 	if err == nil && resumeHint != "" {
 		fmt.Fprintln(os.Stdout, resumeHint)
 	}
 	return err
+}
+
+func (a *Application) closeRuntimeResources() {
+	if a == nil {
+		return
+	}
+	if a.mcpManager != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_ = a.mcpManager.Close(ctx)
+		cancel()
+	}
+	if a.session != nil {
+		_ = a.session.Close()
+	}
 }
 
 func (a *Application) runReal() error {
@@ -962,6 +977,7 @@ func parseReplaySpeed(raw string) (float64, bool) {
 
 var loopEventTypeMap = map[string]model.EventType{
 	"ToolCallStart":         model.ToolCallStart,
+	"ToolStarted":           model.ToolReplay,
 	"AgentReply":            model.AgentReply,
 	"AgentReplyDelta":       model.AgentReplyDelta,
 	"AgentBackgroundWork":   model.AgentBackgroundWork,

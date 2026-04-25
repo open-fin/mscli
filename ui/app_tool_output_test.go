@@ -33,6 +33,14 @@ func TestTruncateToolContentWithPolicy_HeadTailAndOmittedLineCount(t *testing.T)
 	}
 }
 
+func TestMCPToolDisplayNameIsHumanReadable(t *testing.T) {
+	got := displayToolName("mcp__deepwiki__read_wiki_contents")
+	want := "deepwiki - read_wiki_contents (MCP)"
+	if got != want {
+		t.Fatalf("displayToolName = %q, want %q", got, want)
+	}
+}
+
 func TestTruncateToolContentForTool_WriteUses3To5LinePreview(t *testing.T) {
 	lines := make([]string, 9)
 	for i := range lines {

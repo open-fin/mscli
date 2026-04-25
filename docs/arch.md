@@ -35,10 +35,12 @@ mindspore-cli/
     skills/                skill listing, loading, and metadata (embedded at build time)
   permission/              permission policy, types, store, safe command allowlist
   runtime/
+    mcp/                   MCP config, approvals, stdio JSON-RPC, and server lifecycle
     shell/                 stateful shell command runner
     probes/                local and target readiness probes
   tools/
     fs/                    read, grep, glob, edit, write tools
+    mcp/                   MCP tool adapter into the local tools.Tool interface
     shell/                 shell tool wrapper
     skills/                skill loading tool
   ui/                      Bubble Tea app, shared model, panels, slash commands
@@ -67,13 +69,28 @@ runTask:
        + any skill content preloaded by /skill
   -> agent/loop.Engine.RunWithContext(task)
   -> tools.Registry
-  -> tools/fs or tools/shell
-  -> runtime/shell.Runner
+  -> tools/fs, tools/shell, tools/skills, or tools/mcp
+  -> runtime/shell.Runner or runtime/mcp.Manager
   -> loop.Event stream -> model.Event -> ui
 ```
 
 No orchestrator, no planner, no adapter layer. The app calls the engine
 directly. The LLM plans inline within the agent loop.
+
+MCP initialization happens during app wiring, before the TUI starts:
+
+```text
+internal/app init
+  -> runtime/mcp resolve user/project/local configs and approvals
+  -> runtime/mcp connect approved stdio servers
+  -> runtime/mcp tools/list
+  -> tools/mcp wrap discovered tools
+  -> tools.Registry
+```
+
+The MCP MVP supports stdio `tools/list` and `tools/call`. Project MCP configs
+must be approved before their server process starts; rejected or pending project
+servers are skipped and surfaced as warnings.
 
 ### Skill activation
 
@@ -118,6 +135,16 @@ Free text uses the base system prompt which includes skill summaries
 
 - **`tools/`**
   LLM-callable tool surfaces (filesystem, shell, skill loading). Stateless tool definitions.
+
+- **`tools/mcp/`**
+  Adapts discovered MCP tools into `tools.Tool` implementations. It preserves
+  original server/tool names for execution while exposing registry names like
+  `mcp__server__tool`.
+
+- **`runtime/mcp/`**
+  Owns MCP config discovery, project approval filtering, precedence merge,
+  stdio JSON-RPC clients, server process lifecycle, tool listing, tool calls,
+  stderr diagnostics, cancellation cleanup, and reconnect behavior.
 
 - **`runtime/shell/`**
   Stateful command runner with workspace, timeout, and safety checks.

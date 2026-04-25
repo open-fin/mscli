@@ -85,12 +85,13 @@ type ToolSchema struct {
 
 // Property represents a property in the tool schema.
 type Property struct {
-	Type        string              `json:"type"`
-	Description string              `json:"description"`
-	Enum        []string            `json:"enum,omitempty"`
-	Properties  map[string]Property `json:"properties,omitempty"`
-	Required    []string            `json:"required,omitempty"`
-	Items       *Property           `json:"items,omitempty"`
+	Type                 string              `json:"type"`
+	Description          string              `json:"description"`
+	Enum                 []string            `json:"enum,omitempty"`
+	Items                *Property           `json:"items,omitempty"`
+	Properties           map[string]Property `json:"properties,omitempty"`
+	Required             []string            `json:"required,omitempty"`
+	AdditionalProperties any                 `json:"additionalProperties,omitempty"`
 }
 
 // ToolCall represents a tool call request from the model.
