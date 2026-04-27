@@ -1,26 +1,29 @@
 # MCP Support
 
-`mscli` supports Model Context Protocol (MCP) stdio servers as an MVP. MCP tools
-are exposed as normal agent tools with names like `mcp__server__tool`.
+`mscli` supports Model Context Protocol (MCP) stdio servers and Streamable HTTP
+servers. MCP tools are exposed as normal agent tools with names like
+`mcp__server__tool`.
 
 ## Supported Scope
 
 Supported now:
 
 - stdio MCP servers
+- Streamable HTTP servers using `type: "http"`
 - `tools/list`
 - `tools/call`
 
 Not supported yet:
 
-- HTTP, SSE, or WebSocket transports
+- legacy HTTP+SSE / SSE transport
+- WebSocket transports
 - OAuth
 - MCP prompts
 - MCP resources
 - dynamic `tools/list_changed` refresh
 - multimodal MCP results
 
-Unsupported remote transports are parsed but skipped with a warning.
+Unsupported transports are skipped with a warning.
 
 ## Config Files
 
@@ -54,6 +57,24 @@ Example:
 ```
 
 Missing `type` is treated as `stdio`.
+
+Streamable HTTP servers use the MCP endpoint URL and `type: "http"`:
+
+```json
+{
+  "mcpServers": {
+    "remote": {
+      "type": "http",
+      "url": "https://example.com/mcp"
+    }
+  }
+}
+```
+
+`mscli` sends JSON-RPC requests with an `Accept` header for both
+`application/json` and `text/event-stream`, and handles either response format
+from the Streamable HTTP endpoint. The older HTTP+SSE transport that used a
+separate SSE endpoint is still unsupported.
 
 ## Project Approval
 

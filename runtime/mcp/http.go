@@ -349,6 +349,9 @@ func decodeSSERPCResponse(r io.Reader, id int64) (jsonrpcResponse, error) {
 }
 
 func decodeSSERPCData(data string, id int64) (jsonrpcResponse, bool, error) {
+	if strings.TrimSpace(data) == "" {
+		return jsonrpcResponse{}, false, nil
+	}
 	var rpcResp jsonrpcResponse
 	if err := json.Unmarshal([]byte(data), &rpcResp); err != nil {
 		return jsonrpcResponse{}, false, fmt.Errorf("decode mcp http event data: %w", err)
