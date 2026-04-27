@@ -47,10 +47,9 @@ func TestSmokeMCPRealStdioEchoServerProjectApprovalAndCall(t *testing.T) {
 	}
 
 	registry := tools.NewRegistry()
-	eventCh := make(chan model.Event, 32)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	manager, err := initMCPTools(ctx, registry, workDir, time.Second, eventCh, fixedMCPPrompter{decision: runtimemcp.DecisionApproved})
+	manager, _, err := initMCPTools(ctx, registry, workDir, time.Second, fixedMCPPrompter{decision: runtimemcp.DecisionApproved})
 	if err != nil {
 		t.Fatalf("initMCPTools() err = %v", err)
 	}
@@ -112,6 +111,8 @@ for line in sys.stdin:
             "capabilities": {},
             "serverInfo": {"name": "echo", "version": "smoke"}
         })
+    elif method == "notifications/initialized":
+        continue
     elif method == "tools/list":
         send(req_id, {
             "tools": [{

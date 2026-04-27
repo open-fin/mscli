@@ -24,6 +24,12 @@ type jsonrpcRequest struct {
 	Params  any    `json:"params,omitempty"`
 }
 
+type jsonrpcNotification struct {
+	JSONRPC string `json:"jsonrpc"`
+	Method  string `json:"method"`
+	Params  any    `json:"params,omitempty"`
+}
+
 type jsonrpcResponse struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      int64           `json:"id"`
@@ -93,4 +99,20 @@ func (c *rpcConn) call(ctx context.Context, method string, params any, result an
 		}
 		return nil
 	}
+}
+
+func (c *rpcConn) notify(ctx context.Context, method string, params any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.enc.Encode(jsonrpcNotification{
+		JSONRPC: "2.0",
+		Method:  method,
+		Params:  params,
+	}); err != nil {
+		return fmt.Errorf("write mcp json-rpc notification: %w", err)
+	}
+	return nil
 }

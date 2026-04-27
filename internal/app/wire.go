@@ -183,9 +183,9 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 	}
 
 	toolRegistry := initTools(config, workDir)
-	mcpManager, mcpErr := initMCPTools(context.Background(), toolRegistry, workDir, time.Duration(config.Execution.TimeoutSec)*time.Second, eventCh, cfg.MCPApprovalPrompter)
+	mcpManager, mcpStartupEvents, mcpErr := initMCPTools(context.Background(), toolRegistry, workDir, defaultMCPStartupDiscoveryTimeout, cfg.MCPApprovalPrompter)
 	if mcpErr != nil {
-		eventCh <- model.Event{Type: model.ToolWarning, ToolName: "mcp", Message: mcpErr.Error()}
+		mcpStartupEvents = append(mcpStartupEvents, model.Event{Type: model.ToolWarning, ToolName: "mcp", Message: mcpErr.Error()})
 	}
 
 	// Skills: embedded skills are extracted next to the executable,
@@ -298,6 +298,9 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 			return nil, fmt.Errorf("create session: %w", err)
 		}
 		ctxManager.SetSystemPrompt(systemPrompt)
+	}
+	if len(mcpStartupEvents) > 0 {
+		replayBacklog = append(replayBacklog, mcpStartupEvents...)
 	}
 
 	var llmDebugDumper *llm.DebugDumper

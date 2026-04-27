@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +21,6 @@ func TestInitMCPRegistersListedTools(t *testing.T) {
 	t.Setenv("HOME", home)
 	workDir := t.TempDir()
 	registry := tools.NewRegistry()
-	eventCh := make(chan model.Event, 16)
 	fakeMgr := newFakeMCPManager()
 	fakeMgr.tools["server"] = []runtimemcp.ToolDefinition{mcpDef("server", "echo")}
 	restore := stubMCPRuntime(t,
@@ -31,7 +31,7 @@ func TestInitMCPRegistersListedTools(t *testing.T) {
 	)
 	defer restore()
 
-	manager, err := initMCPTools(context.Background(), registry, workDir, time.Second, eventCh, nil)
+	manager, _, err := initMCPTools(context.Background(), registry, workDir, time.Second, nil)
 	if err != nil {
 		t.Fatalf("initMCPTools() err = %v", err)
 	}
@@ -43,12 +43,72 @@ func TestInitMCPRegistersListedTools(t *testing.T) {
 	}
 }
 
+func TestWireUsesBoundedMCPDiscoveryTimeout(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Chdir(t.TempDir())
+	fakeMgr := newFakeMCPManager()
+	fakeMgr.tools["server"] = []runtimemcp.ToolDefinition{mcpDef("server", "echo")}
+	var gotTimeout time.Duration
+	restore := stubMCPRuntime(t,
+		func(context.Context, runtimemcp.ResolveOptions) (runtimemcp.ResolvedConfig, error) {
+			return runtimemcp.ResolvedConfig{Servers: []runtimemcp.ScopedServer{mcpServer("server", runtimemcp.ScopeUser)}}, nil
+		},
+		func(cfg runtimemcp.Config) runtimemcp.Manager {
+			gotTimeout = cfg.CallTimeout
+			return fakeMgr
+		},
+	)
+	defer restore()
+
+	app, err := Wire(BootstrapConfig{})
+	if err != nil {
+		t.Fatalf("Wire() err = %v", err)
+	}
+	app.closeRuntimeResources()
+	if gotTimeout <= 0 || gotTimeout > 30*time.Second {
+		t.Fatalf("MCP discovery CallTimeout = %v, want bounded startup timeout <= 30s", gotTimeout)
+	}
+}
+
+func TestWireDoesNotBlockWhenMCPStartupEmitsManyWarnings(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Chdir(t.TempDir())
+	pending := make([]runtimemcp.ScopedServer, 80)
+	for i := range pending {
+		pending[i] = mcpServer("pending"+strconv.Itoa(i), runtimemcp.ScopeProject)
+	}
+	restore := stubMCPRuntime(t,
+		func(context.Context, runtimemcp.ResolveOptions) (runtimemcp.ResolvedConfig, error) {
+			return runtimemcp.ResolvedConfig{Pending: pending}, nil
+		},
+		func(runtimemcp.Config) runtimemcp.Manager { return newFakeMCPManager() },
+	)
+	defer restore()
+
+	done := make(chan error, 1)
+	go func() {
+		app, err := Wire(BootstrapConfig{MCPApprovalPrompter: fixedMCPPrompter{}})
+		if app != nil {
+			app.closeRuntimeResources()
+		}
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Wire() err = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Wire() blocked while emitting MCP startup warnings")
+	}
+}
+
 func TestInitMCPPromptsPendingProjectServersAndResolvesAgain(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workDir := t.TempDir()
 	registry := tools.NewRegistry()
-	eventCh := make(chan model.Event, 16)
 	pending := mcpServer("project", runtimemcp.ScopeProject)
 	pending.Hash = "sha256:abc"
 	fakeMgr := newFakeMCPManager()
@@ -66,7 +126,7 @@ func TestInitMCPPromptsPendingProjectServersAndResolvesAgain(t *testing.T) {
 	)
 	defer restore()
 
-	_, err := initMCPTools(context.Background(), registry, workDir, time.Second, eventCh, fixedMCPPrompter{decision: runtimemcp.DecisionApproved})
+	_, events, err := initMCPTools(context.Background(), registry, workDir, time.Second, fixedMCPPrompter{decision: runtimemcp.DecisionApproved})
 	if err != nil {
 		t.Fatalf("initMCPTools() err = %v", err)
 	}
@@ -78,7 +138,7 @@ func TestInitMCPPromptsPendingProjectServersAndResolvesAgain(t *testing.T) {
 	if err != nil || !ok || decision != runtimemcp.DecisionApproved {
 		t.Fatalf("approval = %q %v %v, want approved", decision, ok, err)
 	}
-	if !eventsContain(eventCh, "approved") {
+	if !eventsContain(events, "approved") {
 		t.Fatal("events missing approval warning")
 	}
 }
@@ -88,7 +148,6 @@ func TestInitMCPRejectPersistsAndSkips(t *testing.T) {
 	t.Setenv("HOME", home)
 	workDir := t.TempDir()
 	registry := tools.NewRegistry()
-	eventCh := make(chan model.Event, 16)
 	pending := mcpServer("project", runtimemcp.ScopeProject)
 	pending.Hash = "sha256:abc"
 	fakeMgr := newFakeMCPManager()
@@ -100,7 +159,7 @@ func TestInitMCPRejectPersistsAndSkips(t *testing.T) {
 	)
 	defer restore()
 
-	_, err := initMCPTools(context.Background(), registry, workDir, time.Second, eventCh, fixedMCPPrompter{decision: runtimemcp.DecisionRejected})
+	_, events, err := initMCPTools(context.Background(), registry, workDir, time.Second, fixedMCPPrompter{decision: runtimemcp.DecisionRejected})
 	if err != nil {
 		t.Fatalf("initMCPTools() err = %v", err)
 	}
@@ -112,7 +171,7 @@ func TestInitMCPRejectPersistsAndSkips(t *testing.T) {
 	if err != nil || !ok || decision != runtimemcp.DecisionRejected {
 		t.Fatalf("approval = %q %v %v, want rejected", decision, ok, err)
 	}
-	if !eventsContain(eventCh, "rejected") {
+	if !eventsContain(events, "rejected") {
 		t.Fatal("events missing rejection warning")
 	}
 }
@@ -121,7 +180,6 @@ func TestInitMCPSkipPendingServerEmitsWarning(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workDir := t.TempDir()
-	eventCh := make(chan model.Event, 16)
 	pending := mcpServer("project", runtimemcp.ScopeProject)
 	pending.Hash = "sha256:abc"
 	fakeMgr := newFakeMCPManager()
@@ -133,7 +191,7 @@ func TestInitMCPSkipPendingServerEmitsWarning(t *testing.T) {
 	)
 	defer restore()
 
-	_, err := initMCPTools(context.Background(), tools.NewRegistry(), workDir, time.Second, eventCh, fixedMCPPrompter{})
+	_, events, err := initMCPTools(context.Background(), tools.NewRegistry(), workDir, time.Second, fixedMCPPrompter{})
 	if err != nil {
 		t.Fatalf("initMCPTools() err = %v", err)
 	}
@@ -141,14 +199,13 @@ func TestInitMCPSkipPendingServerEmitsWarning(t *testing.T) {
 	if _, ok, err := store.Lookup(workDir, "project", "sha256:abc"); err != nil || ok {
 		t.Fatalf("lookup after skip ok=%v err=%v, want no record", ok, err)
 	}
-	if !eventsContain(eventCh, "skipped") {
+	if !eventsContain(events, "skipped") {
 		t.Fatal("events missing skipped warning")
 	}
 }
 
 func TestInitMCPExistingRejectedServerEmitsWarning(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	eventCh := make(chan model.Event, 16)
 	rejected := mcpServer("project", runtimemcp.ScopeProject)
 	restore := stubMCPRuntime(t,
 		func(context.Context, runtimemcp.ResolveOptions) (runtimemcp.ResolvedConfig, error) {
@@ -158,11 +215,11 @@ func TestInitMCPExistingRejectedServerEmitsWarning(t *testing.T) {
 	)
 	defer restore()
 
-	_, err := initMCPTools(context.Background(), tools.NewRegistry(), t.TempDir(), time.Second, eventCh, nil)
+	_, events, err := initMCPTools(context.Background(), tools.NewRegistry(), t.TempDir(), time.Second, nil)
 	if err != nil {
 		t.Fatalf("initMCPTools() err = %v", err)
 	}
-	if !eventsContain(eventCh, "rejected") {
+	if !eventsContain(events, "rejected") {
 		t.Fatal("events missing rejected warning")
 	}
 }
@@ -170,7 +227,6 @@ func TestInitMCPExistingRejectedServerEmitsWarning(t *testing.T) {
 func TestInitMCPServerFailureEmitsWarningAndContinues(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	registry := tools.NewRegistry()
-	eventCh := make(chan model.Event, 16)
 	fakeMgr := newFakeMCPManager()
 	fakeMgr.connectErr["bad"] = errors.New("boom")
 	fakeMgr.tools["good"] = []runtimemcp.ToolDefinition{mcpDef("good", "echo")}
@@ -185,14 +241,14 @@ func TestInitMCPServerFailureEmitsWarningAndContinues(t *testing.T) {
 	)
 	defer restore()
 
-	_, err := initMCPTools(context.Background(), registry, t.TempDir(), time.Second, eventCh, nil)
+	_, events, err := initMCPTools(context.Background(), registry, t.TempDir(), time.Second, nil)
 	if err != nil {
 		t.Fatalf("initMCPTools() err = %v", err)
 	}
 	if _, ok := registry.Get("mcp__good__echo"); !ok {
 		t.Fatal("registry missing good tool")
 	}
-	if !eventsContain(eventCh, "connect mcp server bad") {
+	if !eventsContain(events, "connect mcp server bad") {
 		t.Fatal("events missing bad server warning")
 	}
 }
@@ -200,7 +256,6 @@ func TestInitMCPServerFailureEmitsWarningAndContinues(t *testing.T) {
 func TestInitMCPDedupesNormalizedToolNamesByScopePrecedence(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	registry := tools.NewRegistry()
-	eventCh := make(chan model.Event, 16)
 	fakeMgr := newFakeMCPManager()
 	fakeMgr.tools["same"] = []runtimemcp.ToolDefinition{mcpDef("same", "echo")}
 	fakeMgr.tools["same!"] = []runtimemcp.ToolDefinition{mcpDef("same!", "echo")}
@@ -215,7 +270,7 @@ func TestInitMCPDedupesNormalizedToolNamesByScopePrecedence(t *testing.T) {
 	)
 	defer restore()
 
-	_, err := initMCPTools(context.Background(), registry, t.TempDir(), time.Second, eventCh, nil)
+	_, events, err := initMCPTools(context.Background(), registry, t.TempDir(), time.Second, nil)
 	if err != nil {
 		t.Fatalf("initMCPTools() err = %v", err)
 	}
@@ -227,7 +282,7 @@ func TestInitMCPDedupesNormalizedToolNamesByScopePrecedence(t *testing.T) {
 	if fakeMgr.calledServer != "same!" {
 		t.Fatalf("calledServer = %q, want local same!", fakeMgr.calledServer)
 	}
-	if !eventsContain(eventCh, "duplicate mcp tool") {
+	if !eventsContain(events, "duplicate mcp tool") {
 		t.Fatal("events missing duplicate warning")
 	}
 }
@@ -235,7 +290,6 @@ func TestInitMCPDedupesNormalizedToolNamesByScopePrecedence(t *testing.T) {
 func TestInitMCPDedupesNormalizedToolNamesDeterministicallyOnTie(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	registry := tools.NewRegistry()
-	eventCh := make(chan model.Event, 16)
 	fakeMgr := newFakeMCPManager()
 	fakeMgr.tools["a!"] = []runtimemcp.ToolDefinition{mcpDef("a!", "echo")}
 	fakeMgr.tools["a@"] = []runtimemcp.ToolDefinition{mcpDef("a@", "echo")}
@@ -250,7 +304,7 @@ func TestInitMCPDedupesNormalizedToolNamesDeterministicallyOnTie(t *testing.T) {
 	)
 	defer restore()
 
-	_, err := initMCPTools(context.Background(), registry, t.TempDir(), time.Second, eventCh, nil)
+	_, _, err := initMCPTools(context.Background(), registry, t.TempDir(), time.Second, nil)
 	if err != nil {
 		t.Fatalf("initMCPTools() err = %v", err)
 	}
@@ -542,15 +596,11 @@ func (m *fakeMCPManager) Close(ctx context.Context) error {
 	return nil
 }
 
-func eventsContain(eventCh <-chan model.Event, needle string) bool {
-	for {
-		select {
-		case ev := <-eventCh:
-			if strings.Contains(ev.Message, needle) {
-				return true
-			}
-		default:
-			return false
+func eventsContain(events []model.Event, needle string) bool {
+	for _, ev := range events {
+		if strings.Contains(ev.Message, needle) {
+			return true
 		}
 	}
+	return false
 }

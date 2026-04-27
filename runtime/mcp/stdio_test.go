@@ -35,6 +35,20 @@ func TestStdioClientInitializeAndListTools(t *testing.T) {
 	}
 }
 
+func TestStdioClientSendsInitializedNotificationBeforeListTools(t *testing.T) {
+	client := newTestStdioClient(t, "require-initialized")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := client.Connect(ctx); err != nil {
+		t.Fatalf("Connect() err = %v", err)
+	}
+	defer client.Close(context.Background())
+
+	if _, err := client.ListTools(ctx); err != nil {
+		t.Fatalf("ListTools() err = %v", err)
+	}
+}
+
 func TestStdioClientCallTool(t *testing.T) {
 	client := newTestStdioClient(t, "normal")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -175,6 +189,7 @@ func TestMCPHelperProcess(t *testing.T) {
 	mode := os.Args[len(os.Args)-1]
 	dec := json.NewDecoder(os.Stdin)
 	enc := json.NewEncoder(os.Stdout)
+	initialized := false
 	for {
 		var req map[string]any
 		if err := dec.Decode(&req); err != nil {
@@ -199,7 +214,13 @@ func TestMCPHelperProcess(t *testing.T) {
 				"capabilities":    map[string]any{},
 				"serverInfo":      map[string]any{"name": "fake", "version": "1.0.0"},
 			})
+		case "notifications/initialized":
+			initialized = true
 		case "tools/list":
+			if mode == "require-initialized" && !initialized {
+				writeRPCError(enc, id, -32002, "initialized notification required before tools/list")
+				continue
+			}
 			writeRPCResult(enc, id, map[string]any{
 				"tools": []any{
 					map[string]any{

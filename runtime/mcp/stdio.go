@@ -120,6 +120,10 @@ func (c *stdioClient) Connect(ctx context.Context) error {
 		_ = c.retire(context.Background(), false)
 		return c.withStderr(err)
 	}
+	if err := rpc.notify(connectCtx, "notifications/initialized", map[string]any{}); err != nil {
+		_ = c.retire(context.Background(), false)
+		return c.withStderr(err)
+	}
 	return nil
 }
 
