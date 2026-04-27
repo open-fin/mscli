@@ -332,12 +332,28 @@ func (a *Application) cmdMCPToggleOne(ctx context.Context, workspaceRoot string,
 		a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("MCP server %q %s", name, state)}
 		return
 	}
-	if containsMCPServer(resolved.Pending, name) || containsMCPServer(resolved.Rejected, name) {
-		state := "enabled"
-		if !enable {
-			state = "disabled"
+	if server, ok := findMCPServer(resolved.Pending, name); ok {
+		if enable {
+			a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("MCP server %q is pending approval; approve it before enabling", name)}
+			return
 		}
-		a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("MCP server %q %s", name, state)}
+		if _, err := runtimemcp.SetLocalServerDisabled(workspaceRoot, server.Name, true); err != nil {
+			a.emitMCPCommandError("mcp", err)
+			return
+		}
+		a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("MCP server %q disabled", name)}
+		return
+	}
+	if server, ok := findMCPServer(resolved.Rejected, name); ok {
+		if enable {
+			a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("MCP server %q is rejected; reset project choices or change approval before enabling", name)}
+			return
+		}
+		if _, err := runtimemcp.SetLocalServerDisabled(workspaceRoot, server.Name, true); err != nil {
+			a.emitMCPCommandError("mcp", err)
+			return
+		}
+		a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("MCP server %q disabled", name)}
 		return
 	}
 	a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("MCP server %q not found", name)}

@@ -117,8 +117,8 @@ func (c *rpcConn) readMatchingResponse(id int64) (jsonrpcResponse, error) {
 		}
 		if msg.Method != "" {
 			if len(msg.ID) > 0 {
-				if err := c.writeUnsupportedRequest(msg.ID); err != nil {
-					return jsonrpcResponse{}, fmt.Errorf("write mcp json-rpc error response: %w", err)
+				if err := c.respondToServerRequest(msg); err != nil {
+					return jsonrpcResponse{}, fmt.Errorf("write mcp json-rpc response: %w", err)
 				}
 			}
 			continue
@@ -134,6 +134,27 @@ func (c *rpcConn) readMatchingResponse(id int64) (jsonrpcResponse, error) {
 			Error:   msg.Error,
 		}, nil
 	}
+}
+
+func (c *rpcConn) respondToServerRequest(msg jsonrpcMessage) error {
+	switch msg.Method {
+	case "ping":
+		return c.writeRequestResult(msg.ID, map[string]any{})
+	default:
+		return c.writeUnsupportedRequest(msg.ID)
+	}
+}
+
+func (c *rpcConn) writeRequestResult(id json.RawMessage, result any) error {
+	return c.enc.Encode(struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Result  any             `json:"result"`
+	}{
+		JSONRPC: "2.0",
+		ID:      id,
+		Result:  result,
+	})
 }
 
 func (c *rpcConn) writeUnsupportedRequest(id json.RawMessage) error {

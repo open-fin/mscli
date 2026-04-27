@@ -49,6 +49,20 @@ func TestStdioClientSendsInitializedNotificationBeforeListTools(t *testing.T) {
 	}
 }
 
+func TestStdioClientRespondsToServerPingBeforeResponse(t *testing.T) {
+	client := newTestStdioClient(t, "ping-before-list")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := client.Connect(ctx); err != nil {
+		t.Fatalf("Connect() err = %v", err)
+	}
+	defer client.Close(context.Background())
+
+	if _, err := client.ListTools(ctx); err != nil {
+		t.Fatalf("ListTools() err = %v", err)
+	}
+}
+
 func TestStdioClientSendsLatestProtocolVersion(t *testing.T) {
 	client := newTestStdioClient(t, "require-latest-protocol")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -267,6 +281,26 @@ func TestMCPHelperProcess(t *testing.T) {
 			if mode == "require-initialized" && !initialized {
 				writeRPCError(enc, id, -32002, "initialized notification required before tools/list")
 				continue
+			}
+			if mode == "ping-before-list" {
+				pingID := 99
+				_ = enc.Encode(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      pingID,
+					"method":  "ping",
+				})
+				var resp map[string]any
+				if err := dec.Decode(&resp); err != nil {
+					os.Exit(2)
+				}
+				if int(resp["id"].(float64)) != pingID {
+					writeRPCError(enc, id, -32003, "ping response id mismatch")
+					continue
+				}
+				if _, ok := resp["result"].(map[string]any); !ok {
+					writeRPCError(enc, id, -32003, "ping response missing empty result")
+					continue
+				}
 			}
 			writeRPCResult(enc, id, map[string]any{
 				"tools": []any{

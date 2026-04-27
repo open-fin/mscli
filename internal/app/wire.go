@@ -183,9 +183,16 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 	}
 
 	toolRegistry := initTools(config, workDir)
-	mcpManager, mcpStartupEvents, mcpErr := initMCPTools(context.Background(), toolRegistry, workDir, defaultMCPStartupDiscoveryTimeout, cfg.MCPApprovalPrompter)
-	if mcpErr != nil {
-		mcpStartupEvents = append(mcpStartupEvents, model.Event{Type: model.ToolWarning, ToolName: "mcp", Message: mcpErr.Error()})
+	var (
+		mcpManager       runtimemcp.Manager
+		mcpStartupEvents []model.Event
+	)
+	if !cfg.Replay {
+		var mcpErr error
+		mcpManager, mcpStartupEvents, mcpErr = initMCPTools(context.Background(), toolRegistry, workDir, defaultMCPStartupDiscoveryTimeout, cfg.MCPApprovalPrompter)
+		if mcpErr != nil {
+			mcpStartupEvents = append(mcpStartupEvents, model.Event{Type: model.ToolWarning, ToolName: "mcp", Message: mcpErr.Error()})
+		}
 	}
 
 	// Skills: embedded skills are extracted next to the executable,

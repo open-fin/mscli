@@ -115,8 +115,8 @@ func TestRPCConnCallHandlesRequestBeforeResponse(t *testing.T) {
 			serverDone <- err
 			return
 		}
-		if clientResp.ID != 99 || clientResp.Error == nil {
-			serverDone <- fmt.Errorf("client response = %#v, want error response for request 99", clientResp)
+		if clientResp.ID != 99 || clientResp.Error != nil || string(clientResp.Result) != "{}" {
+			serverDone <- fmt.Errorf("client response = %#v, want empty result response for ping request 99", clientResp)
 			return
 		}
 		if err := enc.Encode(map[string]any{

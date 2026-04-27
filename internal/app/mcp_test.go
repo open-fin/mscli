@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"gitcode.com/mindspore/mscli/agent/session"
 	runtimemcp "gitcode.com/mindspore/mscli/runtime/mcp"
 	"gitcode.com/mindspore/mscli/tools"
 	"gitcode.com/mindspore/mscli/ui/model"
@@ -67,6 +68,57 @@ func TestWireUsesBoundedMCPDiscoveryTimeout(t *testing.T) {
 	app.closeRuntimeResources()
 	if gotTimeout <= 0 || gotTimeout > 30*time.Second {
 		t.Fatalf("MCP discovery CallTimeout = %v, want bounded startup timeout <= 30s", gotTimeout)
+	}
+}
+
+func TestWireReplaySkipsLiveMCPStartup(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MSCLI_PROVIDER", "")
+	t.Setenv("MSCLI_API_KEY", "")
+	t.Setenv("MSCLI_BASE_URL", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("OPENAI_BASE_URL", "")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ANTHROPIC_BASE_URL", "")
+
+	recordedWorkDir := t.TempDir()
+	runtimeSession, err := session.Create(recordedWorkDir, "system prompt")
+	if err != nil {
+		t.Fatalf("session.Create() err = %v", err)
+	}
+	if err := runtimeSession.Activate(); err != nil {
+		t.Fatalf("runtimeSession.Activate() err = %v", err)
+	}
+	if err := runtimeSession.Close(); err != nil {
+		t.Fatalf("runtimeSession.Close() err = %v", err)
+	}
+
+	t.Chdir(t.TempDir())
+	resolved := false
+	restore := stubMCPRuntime(t,
+		func(context.Context, runtimemcp.ResolveOptions) (runtimemcp.ResolvedConfig, error) {
+			resolved = true
+			return runtimemcp.ResolvedConfig{Servers: []runtimemcp.ScopedServer{mcpServer("live", runtimemcp.ScopeLocal)}}, nil
+		},
+		func(runtimemcp.Config) runtimemcp.Manager {
+			t.Fatal("newMCPManager called during replay")
+			return newFakeMCPManager()
+		},
+	)
+	defer restore()
+
+	app, err := Wire(BootstrapConfig{Replay: true, ReplaySessionID: runtimeSession.Path()})
+	if err != nil {
+		t.Fatalf("Wire() err = %v", err)
+	}
+	app.closeRuntimeResources()
+	if resolved {
+		t.Fatal("MCP config resolved during replay")
+	}
+	if app.mcpManager != nil {
+		t.Fatal("mcpManager initialized during replay")
 	}
 }
 
@@ -505,6 +557,61 @@ func TestCmdMCPEnableRemovesLocalDisabledState(t *testing.T) {
 	}
 	if _, ok := registry.Get("mcp__echo__tool"); !ok {
 		t.Fatal("registry missing mcp__echo__tool after enable")
+	}
+}
+
+func TestCmdMCPEnablePendingOrRejectedDoesNotReportSuccess(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	app := &Application{EventCh: make(chan model.Event, 8), WorkDir: t.TempDir(), mcpManager: newFakeMCPManager()}
+	restore := stubMCPRuntime(t,
+		func(context.Context, runtimemcp.ResolveOptions) (runtimemcp.ResolvedConfig, error) {
+			return runtimemcp.ResolvedConfig{
+				Pending:  []runtimemcp.ScopedServer{mcpServer("pending", runtimemcp.ScopeProject)},
+				Rejected: []runtimemcp.ScopedServer{mcpServer("rejected", runtimemcp.ScopeProject)},
+			}, nil
+		},
+		func(runtimemcp.Config) runtimemcp.Manager { return newFakeMCPManager() },
+	)
+	defer restore()
+
+	app.handleCommand("/mcp enable pending")
+	pending := <-app.EventCh
+	if strings.Contains(pending.Message, `"pending" enabled`) || !strings.Contains(pending.Message, "pending approval") {
+		t.Fatalf("pending enable message = %q", pending.Message)
+	}
+
+	app.handleCommand("/mcp enable rejected")
+	rejected := <-app.EventCh
+	if strings.Contains(rejected.Message, `"rejected" enabled`) || !strings.Contains(rejected.Message, "rejected") {
+		t.Fatalf("rejected enable message = %q", rejected.Message)
+	}
+}
+
+func TestCmdMCPDisablePendingWritesLocalDisabledState(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workDir := t.TempDir()
+	app := &Application{EventCh: make(chan model.Event, 8), WorkDir: workDir, mcpManager: newFakeMCPManager()}
+	restore := stubMCPRuntime(t,
+		func(context.Context, runtimemcp.ResolveOptions) (runtimemcp.ResolvedConfig, error) {
+			return runtimemcp.ResolvedConfig{
+				Pending: []runtimemcp.ScopedServer{mcpServer("pending", runtimemcp.ScopeProject)},
+			}, nil
+		},
+		func(runtimemcp.Config) runtimemcp.Manager { return newFakeMCPManager() },
+	)
+	defer restore()
+
+	app.handleCommand("/mcp disable pending")
+	ev := <-app.EventCh
+	if !strings.Contains(ev.Message, `"pending" disabled`) {
+		t.Fatalf("disable pending message = %q", ev.Message)
+	}
+	disabled, err := runtimemcp.ReadLocalDisabledServers(workDir)
+	if err != nil {
+		t.Fatalf("ReadLocalDisabledServers: %v", err)
+	}
+	if strings.Join(disabled, ",") != "pending" {
+		t.Fatalf("disabled = %#v, want pending", disabled)
 	}
 }
 
