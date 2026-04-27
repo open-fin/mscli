@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -159,6 +160,92 @@ func TestManagerHTTPConnectListCallAndClose(t *testing.T) {
 	}
 	if !sawDelete {
 		t.Fatal("Close did not send DELETE")
+	}
+}
+
+func TestManagerHTTPReconnectsAfterSessionExpires(t *testing.T) {
+	var initializeCount int
+	var initializedNewSession bool
+	var sawExpiredSessionOnList bool
+	var sawNewSessionOnList bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var req jsonrpcRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch req.Method {
+		case "initialize":
+			initializeCount++
+			if initializeCount == 2 && r.Header.Get("MCP-Session-Id") != "" {
+				t.Errorf("second initialize included stale session %q", r.Header.Get("MCP-Session-Id"))
+			}
+			w.Header().Set("MCP-Session-Id", fmt.Sprintf("session-%d", initializeCount))
+			writeJSONRPCResult(t, w, req.ID, map[string]any{
+				"protocolVersion": "2025-11-25",
+				"capabilities":    map[string]any{},
+			})
+		case "notifications/initialized":
+			if r.Header.Get("MCP-Session-Id") == "session-2" {
+				initializedNewSession = true
+			}
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/list":
+			switch r.Header.Get("MCP-Session-Id") {
+			case "session-1":
+				sawExpiredSessionOnList = true
+				w.WriteHeader(http.StatusNotFound)
+			case "session-2":
+				sawNewSessionOnList = true
+				writeJSONRPCResult(t, w, req.ID, map[string]any{
+					"tools": []map[string]any{{
+						"name":        "echo",
+						"description": "Echo text",
+						"inputSchema": map[string]any{"type": "object"},
+					}},
+				})
+			default:
+				t.Errorf("tools/list session = %q, want session-1 or session-2", r.Header.Get("MCP-Session-Id"))
+				w.WriteHeader(http.StatusBadRequest)
+			}
+		default:
+			t.Errorf("unexpected method %q", req.Method)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	mgr := NewManager(Config{ConnectTimeout: time.Second, CallTimeout: time.Second})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := mgr.Connect(ctx, ScopedServer{
+		Name:  "remote",
+		Scope: ScopeUser,
+		Config: ServerConfig{
+			Type: "http",
+			URL:  server.URL + "/mcp",
+		},
+	}); err != nil {
+		t.Fatalf("Connect() err = %v", err)
+	}
+	tools, err := mgr.ListTools(ctx, "remote")
+	if err != nil {
+		t.Fatalf("ListTools() err = %v", err)
+	}
+	if got, want := tools[0].Name, "mcp__remote__echo"; got != want {
+		t.Fatalf("tool name = %q, want %q", got, want)
+	}
+	if initializeCount != 2 {
+		t.Fatalf("initialize count = %d, want 2", initializeCount)
+	}
+	if !sawExpiredSessionOnList || !sawNewSessionOnList || !initializedNewSession {
+		t.Fatalf("session recovery flags expired=%v newList=%v initialized=%v", sawExpiredSessionOnList, sawNewSessionOnList, initializedNewSession)
 	}
 }
 

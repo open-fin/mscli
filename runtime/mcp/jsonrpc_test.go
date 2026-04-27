@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -54,6 +55,90 @@ func TestRPCConnCallReturnsError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "mcp json-rpc error -32000: failed") {
 		t.Fatalf("call() err = %v", err)
+	}
+}
+
+func TestRPCConnCallIgnoresNotificationBeforeResponse(t *testing.T) {
+	rpc, serverIn, serverOut := newTestRPCConn()
+	defer serverIn.Close()
+	defer serverOut.Close()
+
+	go func() {
+		var req jsonrpcRequest
+		_ = json.NewDecoder(serverIn).Decode(&req)
+		_ = json.NewEncoder(serverOut).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"method":  "notifications/tools/list_changed",
+			"params":  map[string]any{},
+		})
+		_ = json.NewEncoder(serverOut).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      req.ID,
+			"result":  map[string]any{"ok": true},
+		})
+	}()
+
+	var result map[string]bool
+	if err := rpc.call(context.Background(), "ping", nil, &result); err != nil {
+		t.Fatalf("call() err = %v", err)
+	}
+	if !result["ok"] {
+		t.Fatalf("result = %#v, want ok", result)
+	}
+}
+
+func TestRPCConnCallHandlesRequestBeforeResponse(t *testing.T) {
+	rpc, serverIn, serverOut := newTestRPCConn()
+	defer serverIn.Close()
+	defer serverOut.Close()
+
+	serverDone := make(chan error, 1)
+	go func() {
+		dec := json.NewDecoder(serverIn)
+		enc := json.NewEncoder(serverOut)
+		var req jsonrpcRequest
+		if err := dec.Decode(&req); err != nil {
+			serverDone <- err
+			return
+		}
+		if err := enc.Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      99,
+			"method":  "ping",
+			"params":  map[string]any{},
+		}); err != nil {
+			serverDone <- err
+			return
+		}
+		var clientResp jsonrpcResponse
+		if err := dec.Decode(&clientResp); err != nil {
+			serverDone <- err
+			return
+		}
+		if clientResp.ID != 99 || clientResp.Error == nil {
+			serverDone <- fmt.Errorf("client response = %#v, want error response for request 99", clientResp)
+			return
+		}
+		if err := enc.Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      req.ID,
+			"result":  map[string]any{"ok": true},
+		}); err != nil {
+			serverDone <- err
+			return
+		}
+		serverDone <- nil
+	}()
+
+	var result map[string]bool
+	if err := rpc.call(context.Background(), "ping", nil, &result); err != nil {
+		t.Fatalf("call() err = %v", err)
+	}
+	if !result["ok"] {
+		t.Fatalf("result = %#v, want ok", result)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatalf("server err = %v", err)
 	}
 }
 

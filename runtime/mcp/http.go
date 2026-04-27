@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -19,6 +20,8 @@ const (
 	mcpProtocolVersion = "2025-11-25"
 	mcpSessionHeader   = "MCP-Session-Id"
 )
+
+var errMCPSessionExpired = errors.New("mcp http session expired")
 
 type streamableHTTPClient struct {
 	server ScopedServer
@@ -47,6 +50,10 @@ func (c *streamableHTTPClient) Connect(ctx context.Context) error {
 	c.opMu.Lock()
 	defer c.opMu.Unlock()
 
+	return c.connectLocked(ctx)
+}
+
+func (c *streamableHTTPClient) connectLocked(ctx context.Context) error {
 	if c.healthy() {
 		return nil
 	}
@@ -80,19 +87,10 @@ func (c *streamableHTTPClient) ListTools(ctx context.Context) ([]ToolDefinition,
 	c.opMu.Lock()
 	defer c.opMu.Unlock()
 
-	if err := c.ensureConnected(); err != nil {
-		return nil, err
-	}
-	callCtx, cancel := withDefaultTimeout(ctx, c.callTimeout())
-	defer cancel()
-
 	var result struct {
 		Tools []json.RawMessage `json:"tools"`
 	}
-	if err := c.call(callCtx, "tools/list", map[string]any{}, &result); err != nil {
-		if isContextErr(err) {
-			c.markUnhealthy()
-		}
+	if err := c.callWithSessionRecoveryLocked(ctx, "tools/list", map[string]any{}, &result); err != nil {
 		return nil, err
 	}
 	return toolDefinitionsFromRaw(c.server.Name, result.Tools)
@@ -109,20 +107,42 @@ func (c *streamableHTTPClient) CallTool(ctx context.Context, toolName string, ar
 	if err != nil {
 		return nil, err
 	}
-	callCtx, cancel := withDefaultTimeout(ctx, c.callTimeout())
-	defer cancel()
-
 	var rawResult json.RawMessage
-	if err := c.call(callCtx, "tools/call", map[string]any{
+	if err := c.callWithSessionRecoveryLocked(ctx, "tools/call", map[string]any{
 		"name":      toolName,
 		"arguments": arguments,
 	}, &rawResult); err != nil {
-		if isContextErr(err) {
-			c.markUnhealthy()
-		}
 		return nil, err
 	}
 	return decodeCallResult(rawResult)
+}
+
+func (c *streamableHTTPClient) callWithSessionRecoveryLocked(ctx context.Context, method string, params any, result any) error {
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := c.ensureConnected(); err != nil {
+			return err
+		}
+		callCtx, cancel := withDefaultTimeout(ctx, c.callTimeout())
+		err := c.call(callCtx, method, params, result)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		if errors.Is(err, errMCPSessionExpired) && attempt == 0 {
+			lastErr = err
+			c.markSessionExpired()
+			if err := c.connectLocked(ctx); err != nil {
+				return err
+			}
+			continue
+		}
+		if isContextErr(err) {
+			c.markUnhealthy()
+		}
+		return err
+	}
+	return lastErr
 }
 
 func (c *streamableHTTPClient) Close(ctx context.Context) error {
@@ -192,7 +212,8 @@ func (c *streamableHTTPClient) call(ctx context.Context, method string, params a
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("MCP-Protocol-Version", mcpProtocolVersion)
-	if sessionID := c.currentSessionID(); sessionID != "" {
+	sessionID := c.currentSessionID()
+	if sessionID != "" {
 		req.Header.Set(mcpSessionHeader, sessionID)
 	}
 
@@ -209,6 +230,9 @@ func (c *streamableHTTPClient) call(ctx context.Context, method string, params a
 		msg := strings.TrimSpace(string(body))
 		if msg == "" {
 			msg = http.StatusText(resp.StatusCode)
+		}
+		if resp.StatusCode == http.StatusNotFound && sessionID != "" {
+			return fmt.Errorf("%w: status %d: %s", errMCPSessionExpired, resp.StatusCode, msg)
 		}
 		return fmt.Errorf("mcp http status %d: %s", resp.StatusCode, msg)
 	}
@@ -281,6 +305,14 @@ func (c *streamableHTTPClient) setSessionID(sessionID string) {
 
 func (c *streamableHTTPClient) markUnhealthy() {
 	c.mu.Lock()
+	c.unhealthy = true
+	c.connected = false
+	c.mu.Unlock()
+}
+
+func (c *streamableHTTPClient) markSessionExpired() {
+	c.mu.Lock()
+	c.sessionID = ""
 	c.unhealthy = true
 	c.connected = false
 	c.mu.Unlock()

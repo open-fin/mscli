@@ -37,6 +37,15 @@ type jsonrpcResponse struct {
 	Error   *jsonrpcError   `json:"error,omitempty"`
 }
 
+type jsonrpcMessage struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id,omitempty"`
+	Method  string          `json:"method,omitempty"`
+	Params  json.RawMessage `json:"params,omitempty"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   *jsonrpcError   `json:"error,omitempty"`
+}
+
 type jsonrpcError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
@@ -71,8 +80,7 @@ func (c *rpcConn) call(ctx context.Context, method string, params any, result an
 	}
 	done := make(chan decodeResult, 1)
 	go func() {
-		var resp jsonrpcResponse
-		err := c.dec.Decode(&resp)
+		resp, err := c.readMatchingResponse(id)
 		done <- decodeResult{resp: resp, err: err}
 	}()
 
@@ -99,6 +107,59 @@ func (c *rpcConn) call(ctx context.Context, method string, params any, result an
 		}
 		return nil
 	}
+}
+
+func (c *rpcConn) readMatchingResponse(id int64) (jsonrpcResponse, error) {
+	for {
+		var msg jsonrpcMessage
+		if err := c.dec.Decode(&msg); err != nil {
+			return jsonrpcResponse{}, err
+		}
+		if msg.Method != "" {
+			if len(msg.ID) > 0 {
+				if err := c.writeUnsupportedRequest(msg.ID); err != nil {
+					return jsonrpcResponse{}, fmt.Errorf("write mcp json-rpc error response: %w", err)
+				}
+			}
+			continue
+		}
+		msgID, ok := jsonrpcNumericID(msg.ID)
+		if !ok || msgID != id {
+			continue
+		}
+		return jsonrpcResponse{
+			JSONRPC: msg.JSONRPC,
+			ID:      msgID,
+			Result:  msg.Result,
+			Error:   msg.Error,
+		}, nil
+	}
+}
+
+func (c *rpcConn) writeUnsupportedRequest(id json.RawMessage) error {
+	return c.enc.Encode(struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Error   *jsonrpcError   `json:"error"`
+	}{
+		JSONRPC: "2.0",
+		ID:      id,
+		Error: &jsonrpcError{
+			Code:    -32601,
+			Message: "method not found",
+		},
+	})
+}
+
+func jsonrpcNumericID(raw json.RawMessage) (int64, bool) {
+	if len(raw) == 0 {
+		return 0, false
+	}
+	var id int64
+	if err := json.Unmarshal(raw, &id); err != nil {
+		return 0, false
+	}
+	return id, true
 }
 
 func (c *rpcConn) notify(ctx context.Context, method string, params any) error {
