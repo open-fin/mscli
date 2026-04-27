@@ -195,6 +195,27 @@ func TestInitMCPPromptsPendingProjectServersAndResolvesAgain(t *testing.T) {
 	}
 }
 
+func TestApprovalRequestIncludesHTTPTransportAndURL(t *testing.T) {
+	server := runtimemcp.ScopedServer{
+		Name:  "remote",
+		Scope: runtimemcp.ScopeProject,
+		Config: runtimemcp.ServerConfig{
+			Type: "http",
+			URL:  "https://example.test/mcp",
+			Raw:  map[string]any{"type": "http", "url": "https://example.test/mcp"},
+		},
+		Hash: "sha256:remote",
+	}
+
+	req := approvalRequest("/workspace", server)
+	if req.Transport != "http" {
+		t.Fatalf("Transport = %q, want http", req.Transport)
+	}
+	if req.URL != "https://example.test/mcp" {
+		t.Fatalf("URL = %q, want https://example.test/mcp", req.URL)
+	}
+}
+
 func TestInitMCPRejectPersistsAndSkips(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

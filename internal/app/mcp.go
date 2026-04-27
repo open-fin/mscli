@@ -28,6 +28,8 @@ type MCPApprovalRequest struct {
 	WorkspaceRoot string
 	ServerName    string
 	ConfigHash    string
+	Transport     string
+	URL           string
 	Command       string
 	Args          []string
 	EnvKeys       []string
@@ -159,6 +161,8 @@ func approvalRequest(workspaceRoot string, server runtimemcp.ScopedServer) MCPAp
 		WorkspaceRoot: workspaceRoot,
 		ServerName:    server.Name,
 		ConfigHash:    server.Hash,
+		Transport:     server.Config.TransportType(),
+		URL:           server.Config.URL,
 		Command:       server.Config.Command,
 		Args:          append([]string(nil), server.Config.Args...),
 		EnvKeys:       envKeys,

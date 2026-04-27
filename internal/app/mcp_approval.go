@@ -29,7 +29,15 @@ func (p *terminalMCPApprovalPrompter) PromptMCPApproval(ctx context.Context, req
 	fmt.Fprintf(p.out, "\nProject MCP server requires approval before it can start.\n")
 	fmt.Fprintf(p.out, "Workspace: %s\n", req.WorkspaceRoot)
 	fmt.Fprintf(p.out, "Server: %s\n", req.ServerName)
-	fmt.Fprintf(p.out, "Command: %s\n", req.Command)
+	if req.Transport != "" {
+		fmt.Fprintf(p.out, "Transport: %s\n", req.Transport)
+	}
+	if strings.TrimSpace(req.URL) != "" {
+		fmt.Fprintf(p.out, "URL: %s\n", req.URL)
+	}
+	if strings.TrimSpace(req.Command) != "" {
+		fmt.Fprintf(p.out, "Command: %s\n", req.Command)
+	}
 	if len(req.Args) > 0 {
 		fmt.Fprintf(p.out, "Args: %s\n", strings.Join(req.Args, " "))
 	}
