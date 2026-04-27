@@ -78,9 +78,10 @@ type ToolFunction struct {
 
 // ToolSchema represents the JSON schema for tool parameters.
 type ToolSchema struct {
-	Type       string              `json:"type"`
-	Properties map[string]Property `json:"properties,omitempty"`
-	Required   []string            `json:"required,omitempty"`
+	Type                 string              `json:"type"`
+	Properties           map[string]Property `json:"properties,omitempty"`
+	Required             []string            `json:"required,omitempty"`
+	AdditionalProperties any                 `json:"additionalProperties,omitempty"`
 }
 
 // Property represents a property in the tool schema.

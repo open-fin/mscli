@@ -66,3 +66,16 @@ func TestConvertSchemaInfersObjectFromProperties(t *testing.T) {
 		t.Fatalf("text type = %q", schema.Properties["text"].Type)
 	}
 }
+
+func TestConvertSchemaPreservesRootAdditionalProperties(t *testing.T) {
+	schema := ConvertSchema(map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"text": map[string]any{"type": "string"},
+		},
+	})
+	if schema.AdditionalProperties != false {
+		t.Fatalf("AdditionalProperties = %#v, want false", schema.AdditionalProperties)
+	}
+}

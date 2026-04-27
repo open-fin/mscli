@@ -107,9 +107,12 @@ func (c *stdioClient) Connect(ctx context.Context) error {
 	c.unhealthy = false
 	c.mu.Unlock()
 
-	var result map[string]any
+	var result struct {
+		ProtocolVersion string         `json:"protocolVersion"`
+		Capabilities    map[string]any `json:"capabilities"`
+	}
 	err = rpc.call(connectCtx, "initialize", map[string]any{
-		"protocolVersion": "2024-11-05",
+		"protocolVersion": mcpProtocolVersion,
 		"capabilities":    map[string]any{},
 		"clientInfo": map[string]any{
 			"name":    "mscli",
@@ -119,6 +122,14 @@ func (c *stdioClient) Connect(ctx context.Context) error {
 	if err != nil {
 		_ = c.retire(context.Background(), false)
 		return c.withStderr(err)
+	}
+	negotiated := strings.TrimSpace(result.ProtocolVersion)
+	if negotiated == "" {
+		negotiated = mcpProtocolVersion
+	}
+	if !supportedMCPProtocolVersion(negotiated) {
+		_ = c.retire(context.Background(), false)
+		return fmt.Errorf("unsupported mcp protocol version %q", negotiated)
 	}
 	if err := rpc.notify(connectCtx, "notifications/initialized", map[string]any{}); err != nil {
 		_ = c.retire(context.Background(), false)

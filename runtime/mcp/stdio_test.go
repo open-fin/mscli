@@ -49,6 +49,39 @@ func TestStdioClientSendsInitializedNotificationBeforeListTools(t *testing.T) {
 	}
 }
 
+func TestStdioClientSendsLatestProtocolVersion(t *testing.T) {
+	client := newTestStdioClient(t, "require-latest-protocol")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := client.Connect(ctx); err != nil {
+		t.Fatalf("Connect() err = %v", err)
+	}
+	defer client.Close(context.Background())
+}
+
+func TestStdioClientAcceptsSupportedNegotiatedProtocolVersion(t *testing.T) {
+	client := newTestStdioClient(t, "negotiate-2025-03-26")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := client.Connect(ctx); err != nil {
+		t.Fatalf("Connect() err = %v", err)
+	}
+	defer client.Close(context.Background())
+}
+
+func TestStdioClientRejectsUnsupportedNegotiatedProtocolVersion(t *testing.T) {
+	client := newTestStdioClient(t, "negotiate-2024-11-05")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	err := client.Connect(ctx)
+	if err == nil {
+		t.Fatal("Connect() err = nil, want unsupported protocol error")
+	}
+	if !strings.Contains(err.Error(), `unsupported mcp protocol version "2024-11-05"`) {
+		t.Fatalf("Connect() err = %v", err)
+	}
+}
+
 func TestStdioClientCallTool(t *testing.T) {
 	client := newTestStdioClient(t, "normal")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -204,13 +237,27 @@ func TestMCPHelperProcess(t *testing.T) {
 					time.Sleep(time.Hour)
 				}
 			}
+			if mode == "require-latest-protocol" {
+				params, _ := req["params"].(map[string]any)
+				if got := params["protocolVersion"]; got != "2025-11-25" {
+					writeRPCError(enc, id, -32602, fmt.Sprintf("protocolVersion = %v, want 2025-11-25", got))
+					continue
+				}
+			}
 			if mode == "stderr" {
 				fmt.Fprint(os.Stderr, strings.Repeat("stderr line\n", 8000))
 				writeRPCError(enc, id, -32000, "initialize failed")
 				continue
 			}
+			protocolVersion := "2025-11-25"
+			if mode == "negotiate-2025-03-26" {
+				protocolVersion = "2025-03-26"
+			}
+			if mode == "negotiate-2024-11-05" {
+				protocolVersion = "2024-11-05"
+			}
 			writeRPCResult(enc, id, map[string]any{
-				"protocolVersion": "2024-11-05",
+				"protocolVersion": protocolVersion,
 				"capabilities":    map[string]any{},
 				"serverInfo":      map[string]any{"name": "fake", "version": "1.0.0"},
 			})

@@ -18,11 +18,15 @@ func ConvertSchema(raw map[string]any) llm.ToolSchema {
 	if schemaType != "object" {
 		return emptyObjectSchema()
 	}
-	return llm.ToolSchema{
+	schema := llm.ToolSchema{
 		Type:       "object",
 		Properties: convertProperties(raw["properties"]),
 		Required:   stringSlice(raw["required"]),
 	}
+	if value, ok := raw["additionalProperties"]; ok {
+		schema.AdditionalProperties = value
+	}
+	return schema
 }
 
 func emptyObjectSchema() llm.ToolSchema {

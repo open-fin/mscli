@@ -17,17 +17,10 @@ import (
 )
 
 const (
-	mcpProtocolVersion = "2025-11-25"
-	mcpSessionHeader   = "MCP-Session-Id"
+	mcpSessionHeader = "MCP-Session-Id"
 )
 
 var errMCPSessionExpired = errors.New("mcp http session expired")
-
-var supportedHTTPProtocolVersions = map[string]bool{
-	"2025-11-25": true,
-	"2025-06-18": true,
-	"2025-03-26": true,
-}
 
 type sseResumeError struct {
 	lastEventID string
@@ -96,7 +89,7 @@ func (c *streamableHTTPClient) connectLocked(ctx context.Context) error {
 	if negotiated == "" {
 		negotiated = mcpProtocolVersion
 	}
-	if !supportedHTTPProtocolVersions[negotiated] {
+	if !supportedMCPProtocolVersion(negotiated) {
 		c.markUnhealthy()
 		return fmt.Errorf("unsupported mcp protocol version %q", negotiated)
 	}
@@ -266,7 +259,7 @@ func (c *streamableHTTPClient) call(ctx context.Context, method string, params a
 		return fmt.Errorf("mcp http status %d: %s", resp.StatusCode, msg)
 	}
 
-	rpcResp, err := decodeHTTPRPCResponse(resp, id)
+	rpcResp, err := c.decodeHTTPRPCResponse(ctx, resp, id)
 	var resumeErr sseResumeError
 	if errors.As(err, &resumeErr) {
 		rpcResp, err = c.resumeSSE(ctx, id, resumeErr)
@@ -364,7 +357,7 @@ func (c *streamableHTTPClient) resumeSSE(ctx context.Context, id int64, resume s
 			}
 			return jsonrpcResponse{}, fmt.Errorf("mcp http resume status %d: %s", resp.StatusCode, msg)
 		}
-		rpcResp, err := decodeHTTPRPCResponse(resp, id)
+		rpcResp, err := c.decodeHTTPRPCResponse(ctx, resp, id)
 		_ = resp.Body.Close()
 		if err == nil {
 			return rpcResp, nil
@@ -435,10 +428,87 @@ func (c *streamableHTTPClient) callTimeout() time.Duration {
 	return defaultCallTimeout
 }
 
-func decodeHTTPRPCResponse(resp *http.Response, id int64) (jsonrpcResponse, error) {
+func (c *streamableHTTPClient) decodeHTTPRPCResponse(ctx context.Context, resp *http.Response, id int64) (jsonrpcResponse, error) {
 	mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	if mediaType == "text/event-stream" {
-		return decodeSSERPCResponse(resp.Body, id)
+		return decodeSSERPCResponseWithHandler(resp.Body, id, c.respondToServerRequest(ctx))
+	}
+	var rpcResp jsonrpcResponse
+	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+		return jsonrpcResponse{}, fmt.Errorf("decode mcp http json response: %w", err)
+	}
+	if rpcResp.ID != id {
+		return jsonrpcResponse{}, fmt.Errorf("mcp json-rpc response id %d does not match request id %d", rpcResp.ID, id)
+	}
+	return rpcResp, nil
+}
+
+func (c *streamableHTTPClient) respondToServerRequest(ctx context.Context) func(jsonrpcMessage) error {
+	return func(msg jsonrpcMessage) error {
+		if len(msg.ID) == 0 {
+			return nil
+		}
+		var result json.RawMessage
+		var rpcErr *jsonrpcError
+		switch msg.Method {
+		case "ping":
+			result = json.RawMessage(`{}`)
+		default:
+			rpcErr = &jsonrpcError{Code: -32601, Message: "method not found"}
+		}
+		return c.sendHTTPResponse(ctx, msg.ID, result, rpcErr)
+	}
+}
+
+func (c *streamableHTTPClient) sendHTTPResponse(ctx context.Context, id json.RawMessage, result json.RawMessage, rpcErr *jsonrpcError) error {
+	reqBody, err := json.Marshal(struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Result  json.RawMessage `json:"result,omitempty"`
+		Error   *jsonrpcError   `json:"error,omitempty"`
+	}{
+		JSONRPC: "2.0",
+		ID:      id,
+		Result:  result,
+		Error:   rpcErr,
+	})
+	if err != nil {
+		return fmt.Errorf("encode mcp http response: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.server.Config.URL, bytes.NewReader(reqBody))
+	if err != nil {
+		return fmt.Errorf("create mcp http response request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("MCP-Protocol-Version", c.currentProtocolVersion())
+	if sessionID := c.currentSessionID(); sessionID != "" {
+		req.Header.Set(mcpSessionHeader, sessionID)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("send mcp http response: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		msg := strings.TrimSpace(string(body))
+		if msg == "" {
+			msg = http.StatusText(resp.StatusCode)
+		}
+		return fmt.Errorf("mcp http response status %d: %s", resp.StatusCode, msg)
+	}
+	return nil
+}
+
+func decodeHTTPRPCResponse(resp *http.Response, id int64) (jsonrpcResponse, error) {
+	return decodeHTTPRPCResponseWithHandler(resp, id, nil)
+}
+
+func decodeHTTPRPCResponseWithHandler(resp *http.Response, id int64, handleServerRequest func(jsonrpcMessage) error) (jsonrpcResponse, error) {
+	mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if mediaType == "text/event-stream" {
+		return decodeSSERPCResponseWithHandler(resp.Body, id, handleServerRequest)
 	}
 	var rpcResp jsonrpcResponse
 	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
@@ -451,6 +521,10 @@ func decodeHTTPRPCResponse(resp *http.Response, id int64) (jsonrpcResponse, erro
 }
 
 func decodeSSERPCResponse(r io.Reader, id int64) (jsonrpcResponse, error) {
+	return decodeSSERPCResponseWithHandler(r, id, nil)
+}
+
+func decodeSSERPCResponseWithHandler(r io.Reader, id int64, handleServerRequest func(jsonrpcMessage) error) (jsonrpcResponse, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	var dataLines []string
@@ -462,7 +536,7 @@ func decodeSSERPCResponse(r io.Reader, id int64) (jsonrpcResponse, error) {
 			if len(dataLines) == 0 {
 				continue
 			}
-			resp, ok, err := decodeSSERPCData(strings.Join(dataLines, "\n"), id)
+			resp, ok, err := decodeSSERPCData(strings.Join(dataLines, "\n"), id, handleServerRequest)
 			if err != nil || ok {
 				return resp, err
 			}
@@ -487,7 +561,7 @@ func decodeSSERPCResponse(r io.Reader, id int64) (jsonrpcResponse, error) {
 		return jsonrpcResponse{}, fmt.Errorf("read mcp http event stream: %w", err)
 	}
 	if len(dataLines) > 0 {
-		resp, ok, err := decodeSSERPCData(strings.Join(dataLines, "\n"), id)
+		resp, ok, err := decodeSSERPCData(strings.Join(dataLines, "\n"), id, handleServerRequest)
 		if err != nil || ok {
 			return resp, err
 		}
@@ -498,16 +572,30 @@ func decodeSSERPCResponse(r io.Reader, id int64) (jsonrpcResponse, error) {
 	return jsonrpcResponse{}, fmt.Errorf("mcp event stream ended before response id %d", id)
 }
 
-func decodeSSERPCData(data string, id int64) (jsonrpcResponse, bool, error) {
+func decodeSSERPCData(data string, id int64, handleServerRequest func(jsonrpcMessage) error) (jsonrpcResponse, bool, error) {
 	if strings.TrimSpace(data) == "" {
 		return jsonrpcResponse{}, false, nil
 	}
-	var rpcResp jsonrpcResponse
-	if err := json.Unmarshal([]byte(data), &rpcResp); err != nil {
+	var msg jsonrpcMessage
+	if err := json.Unmarshal([]byte(data), &msg); err != nil {
 		return jsonrpcResponse{}, false, fmt.Errorf("decode mcp http event data: %w", err)
 	}
-	if rpcResp.ID != id {
+	if msg.Method != "" {
+		if handleServerRequest != nil {
+			if err := handleServerRequest(msg); err != nil {
+				return jsonrpcResponse{}, false, err
+			}
+		}
 		return jsonrpcResponse{}, false, nil
 	}
-	return rpcResp, true, nil
+	msgID, ok := jsonrpcNumericID(msg.ID)
+	if !ok || msgID != id {
+		return jsonrpcResponse{}, false, nil
+	}
+	return jsonrpcResponse{
+		JSONRPC: msg.JSONRPC,
+		ID:      msgID,
+		Result:  msg.Result,
+		Error:   msg.Error,
+	}, true, nil
 }

@@ -107,7 +107,7 @@ for line in sys.stdin:
     req_id = req.get("id")
     if method == "initialize":
         send(req_id, {
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": "2025-11-25",
             "capabilities": {},
             "serverInfo": {"name": "echo", "version": "smoke"}
         })

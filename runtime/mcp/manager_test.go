@@ -367,6 +367,150 @@ func TestManagerHTTPSSEReconnectsWithLastEventIDAfterEarlyClose(t *testing.T) {
 	}
 }
 
+func TestManagerHTTPSSERespondsToServerPingBeforeFinalResponse(t *testing.T) {
+	sessionID := "test-session"
+	pingResponse := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			var msg jsonrpcMessage
+			if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
+				t.Errorf("decode request: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			switch msg.Method {
+			case "initialize":
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("MCP-Session-Id", sessionID)
+				writeJSONRPCResult(t, w, 1, map[string]any{
+					"protocolVersion": "2025-11-25",
+					"capabilities":    map[string]any{},
+				})
+			case "notifications/initialized":
+				w.WriteHeader(http.StatusAccepted)
+			case "tools/list":
+				w.Header().Set("Content-Type", "text/event-stream")
+				flusher, _ := w.(http.Flusher)
+				_, _ = w.Write([]byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"ping\"}\n\n"))
+				if flusher != nil {
+					flusher.Flush()
+				}
+				select {
+				case <-pingResponse:
+				case <-time.After(time.Second):
+					t.Error("timed out waiting for ping response")
+				}
+				_, _ = w.Write([]byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"tools\":[{\"name\":\"echo\",\"inputSchema\":{\"type\":\"object\"}}]}}\n\n"))
+			case "":
+				if string(msg.ID) == "99" && len(msg.Result) > 0 {
+					pingResponse <- struct{}{}
+					w.WriteHeader(http.StatusAccepted)
+					return
+				}
+				t.Errorf("unexpected response message id=%s result=%s error=%v", msg.ID, msg.Result, msg.Error)
+				w.WriteHeader(http.StatusBadRequest)
+			default:
+				w.WriteHeader(http.StatusBadRequest)
+			}
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+
+	mgr := NewManager(Config{ConnectTimeout: time.Second, CallTimeout: 2 * time.Second})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := mgr.Connect(ctx, ScopedServer{
+		Name:  "remote",
+		Scope: ScopeUser,
+		Config: ServerConfig{
+			Type: "http",
+			URL:  server.URL + "/mcp",
+		},
+	}); err != nil {
+		t.Fatalf("Connect() err = %v", err)
+	}
+	tools, err := mgr.ListTools(ctx, "remote")
+	if err != nil {
+		t.Fatalf("ListTools() err = %v", err)
+	}
+	if got, want := tools[0].Name, "mcp__remote__echo"; got != want {
+		t.Fatalf("tool name = %q, want %q", got, want)
+	}
+}
+
+func TestManagerHTTPSSERespondsMethodNotFoundForUnsupportedServerRequest(t *testing.T) {
+	sessionID := "test-session"
+	errorResponse := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			var msg jsonrpcMessage
+			if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
+				t.Errorf("decode request: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			switch msg.Method {
+			case "initialize":
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("MCP-Session-Id", sessionID)
+				writeJSONRPCResult(t, w, 1, map[string]any{
+					"protocolVersion": "2025-11-25",
+					"capabilities":    map[string]any{},
+				})
+			case "notifications/initialized":
+				w.WriteHeader(http.StatusAccepted)
+			case "tools/list":
+				w.Header().Set("Content-Type", "text/event-stream")
+				flusher, _ := w.(http.Flusher)
+				_, _ = w.Write([]byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"unsupported/request\"}\n\n"))
+				if flusher != nil {
+					flusher.Flush()
+				}
+				select {
+				case <-errorResponse:
+				case <-time.After(time.Second):
+					t.Error("timed out waiting for unsupported request response")
+				}
+				_, _ = w.Write([]byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"tools\":[{\"name\":\"echo\",\"inputSchema\":{\"type\":\"object\"}}]}}\n\n"))
+			case "":
+				if string(msg.ID) == "99" && msg.Error != nil && msg.Error.Code == -32601 {
+					errorResponse <- struct{}{}
+					w.WriteHeader(http.StatusAccepted)
+					return
+				}
+				t.Errorf("unexpected response message id=%s result=%s error=%v", msg.ID, msg.Result, msg.Error)
+				w.WriteHeader(http.StatusBadRequest)
+			default:
+				w.WriteHeader(http.StatusBadRequest)
+			}
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+
+	mgr := NewManager(Config{ConnectTimeout: time.Second, CallTimeout: 2 * time.Second})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := mgr.Connect(ctx, ScopedServer{
+		Name:  "remote",
+		Scope: ScopeUser,
+		Config: ServerConfig{
+			Type: "http",
+			URL:  server.URL + "/mcp",
+		},
+	}); err != nil {
+		t.Fatalf("Connect() err = %v", err)
+	}
+	if _, err := mgr.ListTools(ctx, "remote"); err != nil {
+		t.Fatalf("ListTools() err = %v", err)
+	}
+}
+
 func TestManagerHTTPReconnectsAfterSessionExpires(t *testing.T) {
 	var initializeCount int
 	var initializedNewSession bool
