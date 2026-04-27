@@ -210,12 +210,23 @@ func TestManagerCloseServerClosesOnlySelectedClient(t *testing.T) {
 	concrete.mu.Lock()
 	_, firstClient := concrete.clients["first"]
 	_, secondClient := concrete.clients["second"]
+	_, firstServer := concrete.servers["first"]
+	_, secondServer := concrete.servers["second"]
 	concrete.mu.Unlock()
 	if firstClient {
 		t.Fatal("first client still present after CloseServer")
 	}
 	if !secondClient {
 		t.Fatal("second client missing after CloseServer first")
+	}
+	if firstServer {
+		t.Fatal("first server still present after CloseServer")
+	}
+	if !secondServer {
+		t.Fatal("second server missing after CloseServer first")
+	}
+	if _, err := mgr.ListTools(ctx, "first"); err == nil || !strings.Contains(err.Error(), "unknown mcp server") {
+		t.Fatalf("ListTools first after CloseServer err = %v, want unknown server", err)
 	}
 	if _, err := mgr.ListTools(ctx, "second"); err != nil {
 		t.Fatalf("ListTools second after close first: %v", err)

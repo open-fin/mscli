@@ -103,6 +103,7 @@ func (m *manager) CloseServer(ctx context.Context, serverName string) error {
 	}
 	client := m.clients[serverName]
 	delete(m.clients, serverName)
+	delete(m.servers, serverName)
 	m.mu.Unlock()
 
 	if client == nil {

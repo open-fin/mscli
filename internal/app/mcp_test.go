@@ -399,7 +399,8 @@ func TestCmdMCPReconnectSuccess(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	fakeMgr := newFakeMCPManager()
 	fakeMgr.tools["echo"] = []runtimemcp.ToolDefinition{mcpDef("echo", "tool")}
-	app := &Application{EventCh: make(chan model.Event, 8), WorkDir: t.TempDir(), mcpManager: fakeMgr}
+	registry := tools.NewRegistry()
+	app := &Application{EventCh: make(chan model.Event, 8), WorkDir: t.TempDir(), mcpManager: fakeMgr, toolRegistry: registry}
 	restore := stubMCPRuntime(t,
 		func(context.Context, runtimemcp.ResolveOptions) (runtimemcp.ResolvedConfig, error) {
 			return runtimemcp.ResolvedConfig{Servers: []runtimemcp.ScopedServer{mcpServer("echo", runtimemcp.ScopeLocal)}}, nil
@@ -412,6 +413,9 @@ func TestCmdMCPReconnectSuccess(t *testing.T) {
 	ev := <-app.EventCh
 	if !strings.Contains(ev.Message, "Successfully reconnected to echo") {
 		t.Fatalf("message = %q", ev.Message)
+	}
+	if _, ok := registry.Get("mcp__echo__tool"); !ok {
+		t.Fatal("registry missing mcp__echo__tool after reconnect")
 	}
 }
 
@@ -443,7 +447,10 @@ func TestCmdMCPEnableRemovesLocalDisabledState(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	workDir := t.TempDir()
 	writeAppMCPConfig(t, runtimemcp.LocalConfigPath(workDir), map[string]any{"echo": appStdioRaw("echo")}, []string{"echo"})
-	app := &Application{EventCh: make(chan model.Event, 8), WorkDir: workDir, mcpManager: newFakeMCPManager()}
+	fakeMgr := newFakeMCPManager()
+	fakeMgr.tools["echo"] = []runtimemcp.ToolDefinition{mcpDef("echo", "tool")}
+	registry := tools.NewRegistry()
+	app := &Application{EventCh: make(chan model.Event, 8), WorkDir: workDir, mcpManager: fakeMgr, toolRegistry: registry}
 
 	app.handleCommand("/mcp enable echo")
 	ev := <-app.EventCh
@@ -456,6 +463,12 @@ func TestCmdMCPEnableRemovesLocalDisabledState(t *testing.T) {
 	}
 	if len(disabled) != 0 {
 		t.Fatalf("disabled = %#v, want empty", disabled)
+	}
+	if got := strings.Join(fakeMgr.connected, ","); got != "echo" {
+		t.Fatalf("connected = %q, want echo", got)
+	}
+	if _, ok := registry.Get("mcp__echo__tool"); !ok {
+		t.Fatal("registry missing mcp__echo__tool after enable")
 	}
 }
 

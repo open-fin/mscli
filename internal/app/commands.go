@@ -221,16 +221,24 @@ func (a *Application) cmdMCPReconnect(serverName string) {
 		return
 	}
 
-	manager, _ := a.mcpCommandManager(workspaceRoot)
-	if err := manager.Connect(ctx, server); err != nil {
-		a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("Failed to reconnect to %s", name)}
-		return
-	}
-	if _, err := manager.ListTools(ctx, name); err != nil {
+	if err := a.reconnectMCPServer(ctx, workspaceRoot, server); err != nil {
 		a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("Failed to reconnect to %s", name)}
 		return
 	}
 	a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("Successfully reconnected to %s", name)}
+}
+
+func (a *Application) reconnectMCPServer(ctx context.Context, workspaceRoot string, server runtimemcp.ScopedServer) error {
+	manager, _ := a.mcpCommandManager(workspaceRoot)
+	if err := manager.Connect(ctx, server); err != nil {
+		return err
+	}
+	defs, err := manager.ListTools(ctx, server.Name)
+	if err != nil {
+		return err
+	}
+	registerMCPToolDefinitions(a.toolRegistry, manager, normalizeMCPToolDefinitions(server, defs), nil)
+	return nil
 }
 
 func (a *Application) cmdMCPToggle(enable bool, target string) {
@@ -268,6 +276,12 @@ func (a *Application) cmdMCPToggle(enable bool, target string) {
 			a.emitMCPCommandError("mcp", err)
 			return
 		}
+		if enable {
+			if err := a.reconnectMCPServer(ctx, workspaceRoot, server); err != nil {
+				a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("Enabled %s, but failed to reconnect", server.Name)}
+				return
+			}
+		}
 		if !enable && a.mcpManager != nil {
 			_ = a.mcpManager.CloseServer(ctx, server.Name)
 		}
@@ -284,6 +298,10 @@ func (a *Application) cmdMCPToggleOne(ctx context.Context, workspaceRoot string,
 		if enable {
 			if _, err := runtimemcp.SetLocalServerDisabled(workspaceRoot, server.Name, false); err != nil {
 				a.emitMCPCommandError("mcp", err)
+				return
+			}
+			if err := a.reconnectMCPServer(ctx, workspaceRoot, server); err != nil {
+				a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("MCP server %q enabled, but failed to reconnect", name)}
 				return
 			}
 			a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("MCP server %q enabled", name)}

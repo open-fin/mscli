@@ -113,23 +113,11 @@ func initMCPTools(ctx context.Context, registry *tools.Registry, workDir string,
 			continue
 		}
 		for _, def := range defs {
-			if strings.TrimSpace(def.ServerName) == "" {
-				def.ServerName = server.Name
-			}
-			if strings.TrimSpace(def.Name) == "" {
-				def.Name = runtimemcp.BuildToolName(def.ServerName, def.OriginalToolName)
-			}
-			candidates = append(candidates, mcpToolCandidate{server: server, def: def})
+			candidates = append(candidates, mcpToolCandidate{server: server, def: normalizeMCPToolDefinition(server, def)})
 		}
 	}
 
-	for _, def := range dedupeMCPTools(candidates, &events) {
-		for _, tool := range mcptool.WrapTools([]runtimemcp.ToolDefinition{def}, manager) {
-			if err := registry.Register(tool); err != nil {
-				emitMCPWarning(&events, fmt.Sprintf("register mcp tool %s: %v", tool.Name(), err))
-			}
-		}
-	}
+	registerMCPToolDefinitions(registry, manager, dedupeMCPTools(candidates, &events), &events)
 
 	return manager, events, nil
 }
@@ -180,6 +168,39 @@ func approvalRequest(workspaceRoot string, server runtimemcp.ScopedServer) MCPAp
 type mcpToolCandidate struct {
 	server runtimemcp.ScopedServer
 	def    runtimemcp.ToolDefinition
+}
+
+func normalizeMCPToolDefinition(server runtimemcp.ScopedServer, def runtimemcp.ToolDefinition) runtimemcp.ToolDefinition {
+	if strings.TrimSpace(def.ServerName) == "" {
+		def.ServerName = server.Name
+	}
+	if strings.TrimSpace(def.Name) == "" {
+		def.Name = runtimemcp.BuildToolName(def.ServerName, def.OriginalToolName)
+	}
+	return def
+}
+
+func normalizeMCPToolDefinitions(server runtimemcp.ScopedServer, defs []runtimemcp.ToolDefinition) []runtimemcp.ToolDefinition {
+	out := make([]runtimemcp.ToolDefinition, 0, len(defs))
+	for _, def := range defs {
+		out = append(out, normalizeMCPToolDefinition(server, def))
+	}
+	return out
+}
+
+func registerMCPToolDefinitions(registry *tools.Registry, manager runtimemcp.Manager, defs []runtimemcp.ToolDefinition, events *[]model.Event) {
+	if registry == nil {
+		emitMCPWarning(events, "register mcp tools: tool registry is nil")
+		return
+	}
+	for _, tool := range mcptool.WrapTools(defs, manager) {
+		if _, ok := registry.Get(tool.Name()); ok {
+			continue
+		}
+		if err := registry.Register(tool); err != nil {
+			emitMCPWarning(events, fmt.Sprintf("register mcp tool %s: %v", tool.Name(), err))
+		}
+	}
 }
 
 func dedupeMCPTools(candidates []mcpToolCandidate, events *[]model.Event) []runtimemcp.ToolDefinition {
