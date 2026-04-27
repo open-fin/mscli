@@ -51,6 +51,10 @@ func (t *Tool) Name() string {
 	return t.def.Name
 }
 
+func (t *Tool) MCPServerName() string {
+	return t.def.ServerName
+}
+
 func (t *Tool) Description() string {
 	description := strings.TrimSpace(t.def.Description)
 	prefix := fmt.Sprintf("MCP tool %s/%s", t.def.ServerName, t.def.OriginalToolName)

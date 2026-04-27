@@ -23,6 +23,21 @@ const (
 
 var errMCPSessionExpired = errors.New("mcp http session expired")
 
+var supportedHTTPProtocolVersions = map[string]bool{
+	"2025-11-25": true,
+	"2025-06-18": true,
+	"2025-03-26": true,
+}
+
+type sseResumeError struct {
+	lastEventID string
+	retry       time.Duration
+}
+
+func (e sseResumeError) Error() string {
+	return "mcp event stream ended before response"
+}
+
 type streamableHTTPClient struct {
 	server ScopedServer
 	cfg    Config
@@ -33,6 +48,7 @@ type streamableHTTPClient struct {
 
 	mu        sync.Mutex
 	sessionID string
+	protocol  string
 	closed    bool
 	unhealthy bool
 	connected bool
@@ -40,9 +56,10 @@ type streamableHTTPClient struct {
 
 func newStreamableHTTPClient(server ScopedServer, cfg Config) *streamableHTTPClient {
 	return &streamableHTTPClient{
-		server: server,
-		cfg:    cfg,
-		http:   http.DefaultClient,
+		server:   server,
+		cfg:      cfg,
+		http:     http.DefaultClient,
+		protocol: mcpProtocolVersion,
 	}
 }
 
@@ -60,7 +77,10 @@ func (c *streamableHTTPClient) connectLocked(ctx context.Context) error {
 	connectCtx, cancel := withDefaultTimeout(ctx, c.connectTimeout())
 	defer cancel()
 
-	var result map[string]any
+	var result struct {
+		ProtocolVersion string         `json:"protocolVersion"`
+		Capabilities    map[string]any `json:"capabilities"`
+	}
 	if err := c.call(connectCtx, "initialize", map[string]any{
 		"protocolVersion": mcpProtocolVersion,
 		"capabilities":    map[string]any{},
@@ -72,6 +92,15 @@ func (c *streamableHTTPClient) connectLocked(ctx context.Context) error {
 		c.markUnhealthy()
 		return err
 	}
+	negotiated := strings.TrimSpace(result.ProtocolVersion)
+	if negotiated == "" {
+		negotiated = mcpProtocolVersion
+	}
+	if !supportedHTTPProtocolVersions[negotiated] {
+		c.markUnhealthy()
+		return fmt.Errorf("unsupported mcp protocol version %q", negotiated)
+	}
+	c.setProtocolVersion(negotiated)
 	notifyCtx, cancelNotify := context.WithTimeout(connectCtx, 500*time.Millisecond)
 	_ = c.notify(notifyCtx, "notifications/initialized", map[string]any{})
 	cancelNotify()
@@ -164,7 +193,7 @@ func (c *streamableHTTPClient) Close(ctx context.Context) error {
 		return fmt.Errorf("create mcp http close request: %w", err)
 	}
 	req.Header.Set(mcpSessionHeader, sessionID)
-	req.Header.Set("MCP-Protocol-Version", mcpProtocolVersion)
+	req.Header.Set("MCP-Protocol-Version", c.currentProtocolVersion())
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("close mcp http session: %w", err)
@@ -211,7 +240,7 @@ func (c *streamableHTTPClient) call(ctx context.Context, method string, params a
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
-	req.Header.Set("MCP-Protocol-Version", mcpProtocolVersion)
+	req.Header.Set("MCP-Protocol-Version", c.currentProtocolVersion())
 	sessionID := c.currentSessionID()
 	if sessionID != "" {
 		req.Header.Set(mcpSessionHeader, sessionID)
@@ -238,6 +267,10 @@ func (c *streamableHTTPClient) call(ctx context.Context, method string, params a
 	}
 
 	rpcResp, err := decodeHTTPRPCResponse(resp, id)
+	var resumeErr sseResumeError
+	if errors.As(err, &resumeErr) {
+		rpcResp, err = c.resumeSSE(ctx, id, resumeErr)
+	}
 	if err != nil {
 		return err
 	}
@@ -271,7 +304,7 @@ func (c *streamableHTTPClient) notify(ctx context.Context, method string, params
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
-	req.Header.Set("MCP-Protocol-Version", mcpProtocolVersion)
+	req.Header.Set("MCP-Protocol-Version", c.currentProtocolVersion())
 	if sessionID := c.currentSessionID(); sessionID != "" {
 		req.Header.Set(mcpSessionHeader, sessionID)
 	}
@@ -291,6 +324,60 @@ func (c *streamableHTTPClient) notify(ctx context.Context, method string, params
 	return nil
 }
 
+func (c *streamableHTTPClient) resumeSSE(ctx context.Context, id int64, resume sseResumeError) (jsonrpcResponse, error) {
+	lastEventID := resume.lastEventID
+	retry := resume.retry
+	for {
+		if lastEventID == "" {
+			return jsonrpcResponse{}, fmt.Errorf("mcp event stream ended before response id %d", id)
+		}
+		if retry > 0 {
+			timer := time.NewTimer(retry)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return jsonrpcResponse{}, ctx.Err()
+			case <-timer.C:
+			}
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.server.Config.URL, nil)
+		if err != nil {
+			return jsonrpcResponse{}, fmt.Errorf("create mcp http resume request: %w", err)
+		}
+		req.Header.Set("Accept", "text/event-stream")
+		req.Header.Set("Last-Event-ID", lastEventID)
+		req.Header.Set("MCP-Protocol-Version", c.currentProtocolVersion())
+		if sessionID := c.currentSessionID(); sessionID != "" {
+			req.Header.Set(mcpSessionHeader, sessionID)
+		}
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return jsonrpcResponse{}, fmt.Errorf("send mcp http resume request: %w", err)
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			_ = resp.Body.Close()
+			msg := strings.TrimSpace(string(body))
+			if msg == "" {
+				msg = http.StatusText(resp.StatusCode)
+			}
+			return jsonrpcResponse{}, fmt.Errorf("mcp http resume status %d: %s", resp.StatusCode, msg)
+		}
+		rpcResp, err := decodeHTTPRPCResponse(resp, id)
+		_ = resp.Body.Close()
+		if err == nil {
+			return rpcResp, nil
+		}
+		var nextResume sseResumeError
+		if !errors.As(err, &nextResume) {
+			return jsonrpcResponse{}, err
+		}
+		lastEventID = nextResume.lastEventID
+		retry = nextResume.retry
+	}
+}
+
 func (c *streamableHTTPClient) currentSessionID() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -300,6 +387,21 @@ func (c *streamableHTTPClient) currentSessionID() string {
 func (c *streamableHTTPClient) setSessionID(sessionID string) {
 	c.mu.Lock()
 	c.sessionID = sessionID
+	c.mu.Unlock()
+}
+
+func (c *streamableHTTPClient) currentProtocolVersion() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.protocol == "" {
+		return mcpProtocolVersion
+	}
+	return c.protocol
+}
+
+func (c *streamableHTTPClient) setProtocolVersion(protocol string) {
+	c.mu.Lock()
+	c.protocol = protocol
 	c.mu.Unlock()
 }
 
@@ -313,6 +415,7 @@ func (c *streamableHTTPClient) markUnhealthy() {
 func (c *streamableHTTPClient) markSessionExpired() {
 	c.mu.Lock()
 	c.sessionID = ""
+	c.protocol = mcpProtocolVersion
 	c.unhealthy = true
 	c.connected = false
 	c.mu.Unlock()
@@ -351,6 +454,8 @@ func decodeSSERPCResponse(r io.Reader, id int64) (jsonrpcResponse, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	var dataLines []string
+	var lastEventID string
+	var retry time.Duration
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
@@ -366,6 +471,16 @@ func decodeSSERPCResponse(r io.Reader, id int64) (jsonrpcResponse, error) {
 		}
 		if strings.HasPrefix(line, "data:") {
 			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+			continue
+		}
+		if strings.HasPrefix(line, "id:") {
+			lastEventID = strings.TrimSpace(strings.TrimPrefix(line, "id:"))
+			continue
+		}
+		if strings.HasPrefix(line, "retry:") {
+			if retryMillis, err := time.ParseDuration(strings.TrimSpace(strings.TrimPrefix(line, "retry:")) + "ms"); err == nil && retryMillis > 0 {
+				retry = retryMillis
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -376,6 +491,9 @@ func decodeSSERPCResponse(r io.Reader, id int64) (jsonrpcResponse, error) {
 		if err != nil || ok {
 			return resp, err
 		}
+	}
+	if lastEventID != "" {
+		return jsonrpcResponse{}, sseResumeError{lastEventID: lastEventID, retry: retry}
 	}
 	return jsonrpcResponse{}, fmt.Errorf("mcp event stream ended before response id %d", id)
 }

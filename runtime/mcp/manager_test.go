@@ -163,6 +163,210 @@ func TestManagerHTTPConnectListCallAndClose(t *testing.T) {
 	}
 }
 
+func TestManagerHTTPUsesNegotiatedProtocolVersion(t *testing.T) {
+	const negotiated = "2025-03-26"
+	sessionID := "test-session"
+	var sawNegotiatedList, sawNegotiatedCall, sawNegotiatedDelete bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			if got := r.Header.Get("MCP-Protocol-Version"); got == negotiated {
+				sawNegotiatedDelete = true
+			}
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var req jsonrpcRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch req.Method {
+		case "initialize":
+			w.Header().Set("MCP-Session-Id", sessionID)
+			writeJSONRPCResult(t, w, req.ID, map[string]any{
+				"protocolVersion": negotiated,
+				"capabilities":    map[string]any{},
+			})
+		case "notifications/initialized":
+			if got := r.Header.Get("MCP-Protocol-Version"); got != negotiated {
+				t.Errorf("initialized protocol header = %q, want %q", got, negotiated)
+			}
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/list":
+			if got := r.Header.Get("MCP-Protocol-Version"); got != negotiated {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte("wrong protocol version"))
+				return
+			}
+			sawNegotiatedList = true
+			writeJSONRPCResult(t, w, req.ID, map[string]any{
+				"tools": []map[string]any{{
+					"name":        "echo",
+					"description": "Echo text",
+					"inputSchema": map[string]any{"type": "object"},
+				}},
+			})
+		case "tools/call":
+			if got := r.Header.Get("MCP-Protocol-Version"); got != negotiated {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte("wrong protocol version"))
+				return
+			}
+			sawNegotiatedCall = true
+			writeJSONRPCResult(t, w, req.ID, map[string]any{
+				"content": []map[string]any{{"type": "text", "text": "echo: hi"}},
+			})
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	mgr := NewManager(Config{ConnectTimeout: time.Second, CallTimeout: time.Second})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	remote := ScopedServer{
+		Name:  "remote",
+		Scope: ScopeUser,
+		Config: ServerConfig{
+			Type: "http",
+			URL:  server.URL + "/mcp",
+		},
+	}
+	if err := mgr.Connect(ctx, remote); err != nil {
+		t.Fatalf("Connect() err = %v", err)
+	}
+	if _, err := mgr.ListTools(ctx, "remote"); err != nil {
+		t.Fatalf("ListTools() err = %v", err)
+	}
+	if _, err := mgr.CallTool(ctx, "remote", "echo", json.RawMessage(`{"text":"hi"}`)); err != nil {
+		t.Fatalf("CallTool() err = %v", err)
+	}
+	if err := mgr.Close(ctx); err != nil {
+		t.Fatalf("Close() err = %v", err)
+	}
+	if !sawNegotiatedList || !sawNegotiatedCall || !sawNegotiatedDelete {
+		t.Fatalf("negotiated protocol flags list=%v call=%v delete=%v", sawNegotiatedList, sawNegotiatedCall, sawNegotiatedDelete)
+	}
+}
+
+func TestManagerHTTPRejectsUnsupportedNegotiatedProtocolVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req jsonrpcRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if req.Method != "initialize" {
+			t.Errorf("method = %q, want initialize", req.Method)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		writeJSONRPCResult(t, w, req.ID, map[string]any{
+			"protocolVersion": "2024-11-05",
+			"capabilities":    map[string]any{},
+		})
+	}))
+	defer server.Close()
+
+	mgr := NewManager(Config{ConnectTimeout: time.Second, CallTimeout: time.Second})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	err := mgr.Connect(ctx, ScopedServer{
+		Name:  "remote",
+		Scope: ScopeUser,
+		Config: ServerConfig{
+			Type: "http",
+			URL:  server.URL + "/mcp",
+		},
+	})
+	if err == nil {
+		t.Fatal("Connect() err = nil, want unsupported protocol error")
+	}
+	if !strings.Contains(err.Error(), `unsupported mcp protocol version "2024-11-05"`) {
+		t.Fatalf("Connect() err = %v", err)
+	}
+}
+
+func TestManagerHTTPSSEReconnectsWithLastEventIDAfterEarlyClose(t *testing.T) {
+	sessionID := "test-session"
+	var sawResume bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			var req jsonrpcRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("decode request: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			switch req.Method {
+			case "initialize":
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("MCP-Session-Id", sessionID)
+				writeJSONRPCResult(t, w, req.ID, map[string]any{
+					"protocolVersion": "2025-11-25",
+					"capabilities":    map[string]any{},
+				})
+			case "notifications/initialized":
+				w.WriteHeader(http.StatusAccepted)
+			case "tools/list":
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = w.Write([]byte("id: cursor-1\nretry: 1\ndata:\n\n"))
+			default:
+				w.WriteHeader(http.StatusBadRequest)
+			}
+		case http.MethodGet:
+			if got := r.Header.Get("Last-Event-ID"); got != "cursor-1" {
+				t.Errorf("Last-Event-ID = %q, want cursor-1", got)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if got := r.Header.Get("MCP-Session-Id"); got != sessionID {
+				t.Errorf("GET session = %q, want %q", got, sessionID)
+			}
+			sawResume = true
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"tools\":[{\"name\":\"echo\",\"inputSchema\":{\"type\":\"object\"}}]}}\n\n"))
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+
+	mgr := NewManager(Config{ConnectTimeout: time.Second, CallTimeout: time.Second})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := mgr.Connect(ctx, ScopedServer{
+		Name:  "remote",
+		Scope: ScopeUser,
+		Config: ServerConfig{
+			Type: "http",
+			URL:  server.URL + "/mcp",
+		},
+	}); err != nil {
+		t.Fatalf("Connect() err = %v", err)
+	}
+	tools, err := mgr.ListTools(ctx, "remote")
+	if err != nil {
+		t.Fatalf("ListTools() err = %v", err)
+	}
+	if got, want := tools[0].Name, "mcp__remote__echo"; got != want {
+		t.Fatalf("tool name = %q, want %q", got, want)
+	}
+	if !sawResume {
+		t.Fatal("server did not receive SSE resume GET")
+	}
+}
+
 func TestManagerHTTPReconnectsAfterSessionExpires(t *testing.T) {
 	var initializeCount int
 	var initializedNewSession bool

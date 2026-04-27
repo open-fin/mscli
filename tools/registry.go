@@ -41,6 +41,24 @@ func (r *Registry) Register(t Tool) error {
 	return nil
 }
 
+// Unregister removes a tool by name.
+func (r *Registry) Unregister(name string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, exists := r.tools[name]; !exists {
+		return false
+	}
+	delete(r.tools, name)
+	for i, ordered := range r.order {
+		if ordered == name {
+			r.order = append(r.order[:i], r.order[i+1:]...)
+			break
+		}
+	}
+	return true
+}
+
 // MustRegister registers a tool, panicking on error.
 func (r *Registry) MustRegister(t Tool) {
 	if err := r.Register(t); err != nil {

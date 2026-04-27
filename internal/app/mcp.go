@@ -203,6 +203,22 @@ func registerMCPToolDefinitions(registry *tools.Registry, manager runtimemcp.Man
 	}
 }
 
+func unregisterMCPServerTools(registry *tools.Registry, serverName string) {
+	if registry == nil || strings.TrimSpace(serverName) == "" {
+		return
+	}
+	type mcpServerTool interface {
+		MCPServerName() string
+	}
+	for _, tool := range registry.List() {
+		mcpTool, ok := tool.(mcpServerTool)
+		if !ok || mcpTool.MCPServerName() != serverName {
+			continue
+		}
+		registry.Unregister(tool.Name())
+	}
+}
+
 func dedupeMCPTools(candidates []mcpToolCandidate, events *[]model.Event) []runtimemcp.ToolDefinition {
 	sort.Slice(candidates, func(i, j int) bool {
 		a, b := candidates[i], candidates[j]

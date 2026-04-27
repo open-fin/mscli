@@ -237,6 +237,7 @@ func (a *Application) reconnectMCPServer(ctx context.Context, workspaceRoot stri
 	if err != nil {
 		return err
 	}
+	unregisterMCPServerTools(a.toolRegistry, server.Name)
 	registerMCPToolDefinitions(a.toolRegistry, manager, normalizeMCPToolDefinitions(server, defs), nil)
 	return nil
 }
@@ -285,6 +286,9 @@ func (a *Application) cmdMCPToggle(enable bool, target string) {
 		if !enable && a.mcpManager != nil {
 			_ = a.mcpManager.CloseServer(ctx, server.Name)
 		}
+		if !enable {
+			unregisterMCPServerTools(a.toolRegistry, server.Name)
+		}
 	}
 	action := "Disabled"
 	if enable {
@@ -319,6 +323,7 @@ func (a *Application) cmdMCPToggleOne(ctx context.Context, workspaceRoot string,
 			if a.mcpManager != nil {
 				_ = a.mcpManager.CloseServer(ctx, server.Name)
 			}
+			unregisterMCPServerTools(a.toolRegistry, server.Name)
 		}
 		state := "enabled"
 		if !enable {

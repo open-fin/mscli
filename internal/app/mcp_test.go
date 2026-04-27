@@ -419,12 +419,42 @@ func TestCmdMCPReconnectSuccess(t *testing.T) {
 	}
 }
 
+func TestCmdMCPReconnectReplacesStaleServerTools(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	fakeMgr := newFakeMCPManager()
+	registry := tools.NewRegistry()
+	registerMCPToolDefinitions(registry, fakeMgr, []runtimemcp.ToolDefinition{mcpDef("echo", "old")}, nil)
+	fakeMgr.tools["echo"] = []runtimemcp.ToolDefinition{mcpDef("echo", "new")}
+	app := &Application{EventCh: make(chan model.Event, 8), WorkDir: t.TempDir(), mcpManager: fakeMgr, toolRegistry: registry}
+	restore := stubMCPRuntime(t,
+		func(context.Context, runtimemcp.ResolveOptions) (runtimemcp.ResolvedConfig, error) {
+			return runtimemcp.ResolvedConfig{Servers: []runtimemcp.ScopedServer{mcpServer("echo", runtimemcp.ScopeLocal)}}, nil
+		},
+		func(runtimemcp.Config) runtimemcp.Manager { return fakeMgr },
+	)
+	defer restore()
+
+	app.handleCommand("/mcp reconnect echo")
+	<-app.EventCh
+	if _, ok := registry.Get("mcp__echo__old"); ok {
+		t.Fatal("registry still has stale mcp__echo__old after reconnect")
+	}
+	if _, ok := registry.Get("mcp__echo__new"); !ok {
+		t.Fatal("registry missing mcp__echo__new after reconnect")
+	}
+}
+
 func TestCmdMCPDisableWritesLocalStateAndClosesServer(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	workDir := t.TempDir()
 	writeAppMCPConfig(t, runtimemcp.LocalConfigPath(workDir), map[string]any{"echo": appStdioRaw("echo")}, nil)
 	fakeMgr := newFakeMCPManager()
-	app := &Application{EventCh: make(chan model.Event, 8), WorkDir: workDir, mcpManager: fakeMgr}
+	registry := tools.NewRegistry()
+	registerMCPToolDefinitions(registry, fakeMgr, []runtimemcp.ToolDefinition{
+		mcpDef("echo", "tool"),
+		mcpDef("other", "tool"),
+	}, nil)
+	app := &Application{EventCh: make(chan model.Event, 8), WorkDir: workDir, mcpManager: fakeMgr, toolRegistry: registry}
 
 	app.handleCommand("/mcp disable echo")
 	ev := <-app.EventCh
@@ -440,6 +470,12 @@ func TestCmdMCPDisableWritesLocalStateAndClosesServer(t *testing.T) {
 	}
 	if got := strings.Join(fakeMgr.closedServers, ","); got != "echo" {
 		t.Fatalf("closedServers = %q, want echo", got)
+	}
+	if _, ok := registry.Get("mcp__echo__tool"); ok {
+		t.Fatal("registry still has disabled server tool mcp__echo__tool")
+	}
+	if _, ok := registry.Get("mcp__other__tool"); !ok {
+		t.Fatal("registry removed unrelated MCP server tool")
 	}
 }
 

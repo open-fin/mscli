@@ -96,6 +96,29 @@ func TestToolMetadataDoesNotEnterLLMToolSchema(t *testing.T) {
 	}
 }
 
+func TestRegistryUnregisterRemovesToolAndOrder(t *testing.T) {
+	registry := NewRegistry()
+	if err := registry.Register(plainStubTool{name: "one"}); err != nil {
+		t.Fatalf("Register one: %v", err)
+	}
+	if err := registry.Register(plainStubTool{name: "two"}); err != nil {
+		t.Fatalf("Register two: %v", err)
+	}
+
+	if !registry.Unregister("one") {
+		t.Fatal("Unregister(one) = false, want true")
+	}
+	if _, ok := registry.Get("one"); ok {
+		t.Fatal("Get(one) ok after unregister")
+	}
+	if got := registry.Names(); len(got) != 1 || got[0] != "two" {
+		t.Fatalf("Names() = %#v, want [two]", got)
+	}
+	if registry.Unregister("missing") {
+		t.Fatal("Unregister(missing) = true, want false")
+	}
+}
+
 type plainStubTool struct {
 	name string
 }
