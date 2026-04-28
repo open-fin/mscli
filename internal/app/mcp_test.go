@@ -581,6 +581,45 @@ func TestCmdMCPEnableRemovesLocalDisabledState(t *testing.T) {
 	}
 }
 
+func TestCmdMCPEnableDisabledPendingProjectDoesNotReconnectWithoutApproval(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workDir := t.TempDir()
+	fakeMgr := newFakeMCPManager()
+	app := &Application{EventCh: make(chan model.Event, 8), WorkDir: workDir, mcpManager: fakeMgr, toolRegistry: tools.NewRegistry()}
+	resolveCalls := 0
+	restore := stubMCPRuntime(t,
+		func(context.Context, runtimemcp.ResolveOptions) (runtimemcp.ResolvedConfig, error) {
+			resolveCalls++
+			if resolveCalls == 1 {
+				return runtimemcp.ResolvedConfig{
+					Disabled: []runtimemcp.ScopedServer{mcpServer("pending", runtimemcp.ScopeProject)},
+				}, nil
+			}
+			return runtimemcp.ResolvedConfig{
+				Pending: []runtimemcp.ScopedServer{mcpServer("pending", runtimemcp.ScopeProject)},
+			}, nil
+		},
+		func(runtimemcp.Config) runtimemcp.Manager { return fakeMgr },
+	)
+	defer restore()
+
+	app.handleCommand("/mcp enable pending")
+	ev := <-app.EventCh
+	if strings.Contains(ev.Message, `"pending" enabled`) || !strings.Contains(ev.Message, "pending approval") {
+		t.Fatalf("enable disabled pending message = %q", ev.Message)
+	}
+	if len(fakeMgr.connected) != 0 {
+		t.Fatalf("connected = %#v, want none", fakeMgr.connected)
+	}
+	disabled, err := runtimemcp.ReadLocalDisabledServers(workDir)
+	if err != nil {
+		t.Fatalf("ReadLocalDisabledServers: %v", err)
+	}
+	if len(disabled) != 0 {
+		t.Fatalf("disabled = %#v, want empty", disabled)
+	}
+}
+
 func TestCmdMCPEnablePendingOrRejectedDoesNotReportSuccess(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	app := &Application{EventCh: make(chan model.Event, 8), WorkDir: t.TempDir(), mcpManager: newFakeMCPManager()}

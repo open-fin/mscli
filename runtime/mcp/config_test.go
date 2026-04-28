@@ -114,6 +114,40 @@ func TestResolveConfigSuppressesRejectedProject(t *testing.T) {
 	}
 }
 
+func TestResolveConfigMovesLocalDisabledPendingAndRejectedProjectsOutOfApprovalQueues(t *testing.T) {
+	home := t.TempDir()
+	workspace := t.TempDir()
+	store := NewApprovalStore(filepath.Join(home, ".mscli", "mcp_approvals.json"))
+	pendingRaw := stdioRaw("pending")
+	rejectedRaw := stdioRaw("rejected")
+	writeMCPConfig(t, ProjectConfigPath(workspace), map[string]any{
+		"pending":  pendingRaw,
+		"rejected": rejectedRaw,
+	})
+	writeMCPConfigWithDisabled(t, LocalConfigPath(workspace), nil, []string{"pending", "rejected"})
+	if err := store.Record(workspace, "rejected", CanonicalConfigHash(ServerConfig{Raw: rejectedRaw}), DecisionRejected); err != nil {
+		t.Fatalf("Record rejection: %v", err)
+	}
+
+	resolved, err := ResolveConfig(context.Background(), ResolveOptions{
+		HomeDir:       home,
+		WorkspaceRoot: workspace,
+		ApprovalStore: store,
+	})
+	if err != nil {
+		t.Fatalf("ResolveConfig() err = %v", err)
+	}
+	if len(resolved.Pending) != 0 || len(resolved.Rejected) != 0 {
+		t.Fatalf("pending/rejected = %d/%d, want 0/0", len(resolved.Pending), len(resolved.Rejected))
+	}
+	if got, want := serverCommands(resolved.Disabled), map[string]string{
+		"pending":  "pending",
+		"rejected": "rejected",
+	}; !equalStringMap(got, want) {
+		t.Fatalf("disabled = %#v, want %#v", got, want)
+	}
+}
+
 func TestResolveConfigAcceptsHTTPAndSkipsUnsupportedTransports(t *testing.T) {
 	home := t.TempDir()
 	workspace := t.TempDir()

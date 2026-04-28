@@ -78,6 +78,8 @@ func ResolveConfig(ctx context.Context, opts ResolveOptions) (ResolvedConfig, er
 	userServers := readMCPConfigSource(&resolved, UserConfigPath(home), ScopeUser)
 	projectServers := readMCPConfigSource(&resolved, ProjectConfigPath(workspaceAbs), ScopeProject)
 	localServers := readMCPConfigSource(&resolved, LocalConfigPath(workspaceAbs), ScopeLocal)
+	disabledNames, disabledErr := readLocalDisabledServersFile(LocalConfigPath(workspaceAbs))
+	disabledSet := stringSet(disabledNames)
 
 	approvedProject := make([]ScopedServer, 0, len(projectServers))
 	for _, server := range projectServers {
@@ -118,9 +120,10 @@ func ResolveConfig(ctx context.Context, opts ResolveOptions) (ResolvedConfig, er
 		merged[server.Name] = server
 	}
 	resolved.Servers = sortedServerValues(merged)
-	disabledNames, disabledErr := readLocalDisabledServersFile(LocalConfigPath(workspaceAbs))
 	if disabledErr == nil && len(disabledNames) > 0 {
 		resolved.Servers, resolved.Disabled = splitDisabledServers(resolved.Servers, stringSet(disabledNames))
+		resolved.Pending, resolved.Disabled = splitDisabledServersInto(resolved.Pending, disabledSet, resolved.Disabled)
+		resolved.Rejected, resolved.Disabled = splitDisabledServersInto(resolved.Rejected, disabledSet, resolved.Disabled)
 	} else if disabledErr != nil && !os.IsNotExist(disabledErr) {
 		// The local config source has already emitted parse warnings. Avoid
 		// duplicating that warning while keeping startup non-fatal.
@@ -270,11 +273,21 @@ func readLocalDisabledServersFile(path string) ([]string, error) {
 }
 
 func splitDisabledServers(servers []ScopedServer, disabled map[string]struct{}) ([]ScopedServer, []ScopedServer) {
+	return splitDisabledServersInto(servers, disabled, nil)
+}
+
+func splitDisabledServersInto(servers []ScopedServer, disabled map[string]struct{}, disabledServers []ScopedServer) ([]ScopedServer, []ScopedServer) {
 	active := make([]ScopedServer, 0, len(servers))
-	disabledServers := make([]ScopedServer, 0)
+	disabledNames := make(map[string]struct{}, len(disabledServers))
+	for _, server := range disabledServers {
+		disabledNames[server.Name] = struct{}{}
+	}
 	for _, server := range servers {
 		if _, ok := disabled[server.Name]; ok {
-			disabledServers = append(disabledServers, server)
+			if _, exists := disabledNames[server.Name]; !exists {
+				disabledServers = append(disabledServers, server)
+				disabledNames[server.Name] = struct{}{}
+			}
 			continue
 		}
 		active = append(active, server)
