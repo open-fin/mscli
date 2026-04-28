@@ -121,7 +121,7 @@ func ResolveConfig(ctx context.Context, opts ResolveOptions) (ResolvedConfig, er
 	}
 	resolved.Servers = sortedServerValues(merged)
 	if disabledErr == nil && len(disabledNames) > 0 {
-		resolved.Servers, resolved.Disabled = splitDisabledServers(resolved.Servers, stringSet(disabledNames))
+		resolved.Servers, resolved.Disabled = splitDisabledServers(resolved.Servers, disabledSet)
 		resolved.Pending, resolved.Disabled = splitDisabledServersInto(resolved.Pending, disabledSet, resolved.Disabled)
 		resolved.Rejected, resolved.Disabled = splitDisabledServersInto(resolved.Rejected, disabledSet, resolved.Disabled)
 	} else if disabledErr != nil && !os.IsNotExist(disabledErr) {
