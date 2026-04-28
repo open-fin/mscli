@@ -272,15 +272,18 @@ func (a *Application) cmdMCPToggle(enable bool, target string) {
 		a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("All MCP servers are already %s", state)}
 		return
 	}
+	enabledCount := 0
+	skippedCount := 0
 	for _, server := range targets {
 		if enable {
-			if message, enabled, err := a.enableDisabledMCPServer(ctx, workspaceRoot, server); err != nil {
+			if _, enabled, err := a.enableDisabledMCPServer(ctx, workspaceRoot, server); err != nil {
 				a.emitMCPCommandError("mcp", err)
 				return
 			} else if !enabled {
-				a.EventCh <- model.Event{Type: model.AgentReply, Message: message}
-				return
+				skippedCount++
+				continue
 			}
+			enabledCount++
 			continue
 		}
 		if _, err := runtimemcp.SetLocalServerDisabled(workspaceRoot, server.Name, true); err != nil {
@@ -295,10 +298,16 @@ func (a *Application) cmdMCPToggle(enable bool, target string) {
 		}
 	}
 	action := "Disabled"
+	count := len(targets)
 	if enable {
 		action = "Enabled"
+		count = enabledCount
 	}
-	a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("%s %d MCP server(s)", action, len(targets))}
+	message := fmt.Sprintf("%s %d MCP server(s)", action, count)
+	if enable && skippedCount > 0 {
+		message = fmt.Sprintf("%s, skipped %d", message, skippedCount)
+	}
+	a.EventCh <- model.Event{Type: model.AgentReply, Message: message}
 }
 
 func (a *Application) cmdMCPToggleOne(ctx context.Context, workspaceRoot string, resolved runtimemcp.ResolvedConfig, enable bool, name string) {
@@ -364,18 +373,34 @@ func (a *Application) enableDisabledMCPServer(ctx context.Context, workspaceRoot
 	if _, err := runtimemcp.SetLocalServerDisabled(workspaceRoot, server.Name, false); err != nil {
 		return "", false, err
 	}
+	restoreDisabled := func() error {
+		_, err := runtimemcp.SetLocalServerDisabled(workspaceRoot, server.Name, true)
+		return err
+	}
 	refreshed, _, err := a.resolveMCPForCommand(ctx)
 	if err != nil {
+		if restoreErr := restoreDisabled(); restoreErr != nil {
+			return "", false, fmt.Errorf("restore mcp server %q disabled state: %w", server.Name, restoreErr)
+		}
 		return "", false, err
 	}
 	if server, ok := findMCPServer(refreshed.Pending, server.Name); ok {
+		if err := restoreDisabled(); err != nil {
+			return "", false, fmt.Errorf("restore mcp server %q disabled state: %w", server.Name, err)
+		}
 		return fmt.Sprintf("MCP server %q is pending approval; approve it before enabling", server.Name), false, nil
 	}
 	if server, ok := findMCPServer(refreshed.Rejected, server.Name); ok {
+		if err := restoreDisabled(); err != nil {
+			return "", false, fmt.Errorf("restore mcp server %q disabled state: %w", server.Name, err)
+		}
 		return fmt.Sprintf("MCP server %q is rejected; reset project choices or change approval before enabling", server.Name), false, nil
 	}
 	active, ok := findMCPServer(refreshed.Servers, server.Name)
 	if !ok {
+		if err := restoreDisabled(); err != nil {
+			return "", false, fmt.Errorf("restore mcp server %q disabled state: %w", server.Name, err)
+		}
 		return fmt.Sprintf("MCP server %q not found", server.Name), false, nil
 	}
 	if err := a.reconnectMCPServer(ctx, workspaceRoot, active); err != nil {

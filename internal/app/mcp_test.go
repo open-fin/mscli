@@ -584,6 +584,7 @@ func TestCmdMCPEnableRemovesLocalDisabledState(t *testing.T) {
 func TestCmdMCPEnableDisabledPendingProjectDoesNotReconnectWithoutApproval(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	workDir := t.TempDir()
+	writeAppMCPConfig(t, runtimemcp.LocalConfigPath(workDir), nil, []string{"pending"})
 	fakeMgr := newFakeMCPManager()
 	app := &Application{EventCh: make(chan model.Event, 8), WorkDir: workDir, mcpManager: fakeMgr, toolRegistry: tools.NewRegistry()}
 	resolveCalls := 0
@@ -615,8 +616,59 @@ func TestCmdMCPEnableDisabledPendingProjectDoesNotReconnectWithoutApproval(t *te
 	if err != nil {
 		t.Fatalf("ReadLocalDisabledServers: %v", err)
 	}
-	if len(disabled) != 0 {
-		t.Fatalf("disabled = %#v, want empty", disabled)
+	if strings.Join(disabled, ",") != "pending" {
+		t.Fatalf("disabled = %#v, want pending preserved", disabled)
+	}
+}
+
+func TestCmdMCPEnableAllContinuesAfterDisabledPendingProject(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workDir := t.TempDir()
+	writeAppMCPConfig(t, runtimemcp.LocalConfigPath(workDir), nil, []string{"active", "pending"})
+	fakeMgr := newFakeMCPManager()
+	fakeMgr.tools["active"] = []runtimemcp.ToolDefinition{mcpDef("active", "tool")}
+	app := &Application{EventCh: make(chan model.Event, 8), WorkDir: workDir, mcpManager: fakeMgr, toolRegistry: tools.NewRegistry()}
+	restore := stubMCPRuntime(t,
+		func(context.Context, runtimemcp.ResolveOptions) (runtimemcp.ResolvedConfig, error) {
+			disabled, err := runtimemcp.ReadLocalDisabledServers(workDir)
+			if err != nil {
+				return runtimemcp.ResolvedConfig{}, err
+			}
+			disabledSet := make(map[string]struct{}, len(disabled))
+			for _, name := range disabled {
+				disabledSet[name] = struct{}{}
+			}
+			var resolved runtimemcp.ResolvedConfig
+			if _, ok := disabledSet["pending"]; ok {
+				resolved.Disabled = append(resolved.Disabled, mcpServer("pending", runtimemcp.ScopeProject))
+			} else {
+				resolved.Pending = append(resolved.Pending, mcpServer("pending", runtimemcp.ScopeProject))
+			}
+			if _, ok := disabledSet["active"]; ok {
+				resolved.Disabled = append(resolved.Disabled, mcpServer("active", runtimemcp.ScopeLocal))
+			} else {
+				resolved.Servers = append(resolved.Servers, mcpServer("active", runtimemcp.ScopeLocal))
+			}
+			return resolved, nil
+		},
+		func(runtimemcp.Config) runtimemcp.Manager { return fakeMgr },
+	)
+	defer restore()
+
+	app.handleCommand("/mcp enable")
+	ev := <-app.EventCh
+	if !strings.Contains(ev.Message, "Enabled 1 MCP server(s)") || !strings.Contains(ev.Message, "skipped 1") {
+		t.Fatalf("enable all message = %q", ev.Message)
+	}
+	if got := strings.Join(fakeMgr.connected, ","); got != "active" {
+		t.Fatalf("connected = %q, want active", got)
+	}
+	disabled, err := runtimemcp.ReadLocalDisabledServers(workDir)
+	if err != nil {
+		t.Fatalf("ReadLocalDisabledServers: %v", err)
+	}
+	if strings.Join(disabled, ",") != "pending" {
+		t.Fatalf("disabled = %#v, want pending preserved", disabled)
 	}
 }
 
