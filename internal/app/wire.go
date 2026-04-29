@@ -672,14 +672,14 @@ func newTrajectoryRecorder(s *session.Session, cm *agentctx.Manager, workDir str
 			}
 			return s.AppendToolCall(tc)
 		},
-		RecordToolResult: func(tc llm.ToolCall, content string) error {
+		RecordToolResult: func(tc llm.ToolCall, content string, meta map[string]any) error {
 			if s == nil {
 				return nil
 			}
 			if err := ensureSessionActive(); err != nil {
 				return err
 			}
-			return s.AppendToolResult(tc.ID, tc.Function.Name, content)
+			return s.AppendToolResult(tc.ID, tc.Function.Name, content, meta)
 		},
 		RecordSkillActivate: func(skillName string) error {
 			if s == nil {

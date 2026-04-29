@@ -20,7 +20,7 @@ func TestAddToolResultWithFallbackOnOversizedContent(t *testing.T) {
 	ex := &executor{engine: engine}
 
 	oversized := strings.Repeat("x", 1000) // ~250 tokens, exceeds max usable 100
-	if _, err := ex.addToolResultWithFallback(context.Background(), "call_1", oversized); err != nil {
+	if _, err := ex.addToolResultWithFallback(context.Background(), "call_1", oversized, nil); err != nil {
 		t.Fatalf("addToolResultWithFallback returned error: %v", err)
 	}
 

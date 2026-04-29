@@ -158,7 +158,7 @@ func newPersistenceRecorder(log *[]string) *TrajectoryRecorder {
 			appendLog(last)
 			return nil
 		},
-		RecordToolResult: func(tc llm.ToolCall, _ string) error {
+		RecordToolResult: func(tc llm.ToolCall, _ string, _ map[string]any) error {
 			last = "tool_result:" + tc.Function.Name
 			appendLog(last)
 			return nil
@@ -338,6 +338,63 @@ func TestRunAddsStandardMetadataToReturnedToolResult(t *testing.T) {
 	}
 	if editEvent.Meta["edit_diff"] == nil {
 		t.Fatalf("edit_diff metadata was not preserved: %#v", editEvent.Meta)
+	}
+}
+
+func TestRunRecorderReceivesToolResultMetadata(t *testing.T) {
+	args, err := json.Marshal(map[string]string{"path": "sample.txt"})
+	if err != nil {
+		t.Fatalf("marshal tool args: %v", err)
+	}
+
+	provider := &scriptedStreamProvider{
+		responses: []*llm.CompletionResponse{
+			{
+				ToolCalls: []llm.ToolCall{{
+					ID:   "call-read-meta",
+					Type: "function",
+					Function: llm.ToolCallFunc{
+						Name:      "read",
+						Arguments: args,
+					},
+				}},
+				FinishReason: llm.FinishToolCalls,
+			},
+			{Content: "done", FinishReason: llm.FinishStop},
+		},
+	}
+	registry := tools.NewRegistry()
+	registry.MustRegister(stubTool{
+		name:    "read",
+		content: "file",
+		meta:    map[string]any{tools.MetaSource: tools.SourceFS},
+	})
+
+	engine := NewEngine(EngineConfig{MaxIterations: 2, ContextWindow: 4096}, provider, registry)
+	var recordedMeta map[string]any
+	engine.SetTrajectoryRecorder(&TrajectoryRecorder{
+		RecordToolResult: func(_ llm.ToolCall, _ string, meta map[string]any) error {
+			recordedMeta = meta
+			return nil
+		},
+		PersistSnapshot: func() error { return nil },
+	})
+
+	_, err = engine.RunWithContext(context.Background(), Task{
+		ID:          "record-tool-meta",
+		Description: "read file",
+	})
+	if err != nil {
+		t.Fatalf("RunWithContext failed: %v", err)
+	}
+	if got := recordedMeta[tools.MetaSource]; got != tools.SourceFS {
+		t.Fatalf("recorded source = %#v, want fs (meta %#v)", got, recordedMeta)
+	}
+	if got := recordedMeta[tools.MetaStatus]; got != tools.StatusCompleted {
+		t.Fatalf("recorded status = %#v, want completed", got)
+	}
+	if _, ok := recordedMeta[tools.MetaDurationMS].(int64); !ok {
+		t.Fatalf("recorded duration = %#v, want int64", recordedMeta[tools.MetaDurationMS])
 	}
 }
 

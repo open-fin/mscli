@@ -134,6 +134,72 @@ func TestCreateDefersDiskWritesUntilActivate(t *testing.T) {
 	}
 }
 
+func TestAppendToolResultPersistsAndReplaysMeta(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	workDir := t.TempDir()
+	s, err := Create(workDir, "system")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if err := s.Activate(); err != nil {
+		t.Fatalf("activate session: %v", err)
+	}
+
+	meta := map[string]any{
+		"status":      "completed",
+		"duration_ms": int64(25),
+		"exit_code":   0,
+		"bytes":       int64(123),
+		"edit_diff": map[string]any{
+			"path":  "a.txt",
+			"lines": []any{"-old", "+new"},
+		},
+	}
+	if err := s.AppendToolResult("call-1", "edit", "edited", meta); err != nil {
+		t.Fatalf("append tool result: %v", err)
+	}
+	meta["status"] = "mutated"
+	if err := s.Close(); err != nil {
+		t.Fatalf("close session: %v", err)
+	}
+
+	data, err := os.ReadFile(s.Path())
+	if err != nil {
+		t.Fatalf("read trajectory: %v", err)
+	}
+	if !strings.Contains(string(data), `"meta"`) || !strings.Contains(string(data), `"edit_diff"`) {
+		t.Fatalf("trajectory missing metadata:\n%s", string(data))
+	}
+
+	loaded, err := LoadByID(workDir, s.ID())
+	if err != nil {
+		t.Fatalf("load session: %v", err)
+	}
+	t.Cleanup(func() { _ = loaded.Close() })
+
+	replay := loaded.ReplayEvents()
+	if len(replay) != 1 {
+		t.Fatalf("replay len = %d, want 1 (%#v)", len(replay), replay)
+	}
+	got := replay[0].Meta
+	if got["status"] != "completed" {
+		t.Fatalf("status = %#v, want completed", got["status"])
+	}
+	if _, ok := got["duration_ms"].(int64); !ok {
+		t.Fatalf("duration_ms = %#v, want int64", got["duration_ms"])
+	}
+	if _, ok := got["exit_code"].(int); !ok {
+		t.Fatalf("exit_code = %#v, want int", got["exit_code"])
+	}
+	if _, ok := got["bytes"].(int64); !ok {
+		t.Fatalf("bytes = %#v, want int64", got["bytes"])
+	}
+	if got["edit_diff"] == nil {
+		t.Fatalf("edit_diff missing after replay: %#v", got)
+	}
+}
+
 func TestLoadByIDFallsBackToLegacySnapshotSidecar(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 

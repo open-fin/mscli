@@ -44,7 +44,7 @@ type TrajectoryRecorder struct {
 	RecordUserInput         func(string) error
 	RecordAssistant         func(string) error
 	RecordToolCall          func(llm.ToolCall) error
-	RecordToolResult        func(llm.ToolCall, string) error
+	RecordToolResult        func(llm.ToolCall, string, map[string]any) error
 	RecordSkillActivate     func(string) error
 	RecordContextCompaction func(trigger string, beforeTokens, afterTokens int, message string) error
 	PrepareFileMutation     func(llm.ToolCall) error
@@ -487,7 +487,8 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 	tool, ok := ex.engine.tools.Get(toolName)
 	if !ok {
 		errMsg := fmt.Sprintf("Tool not found: %s", toolName)
-		notice, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg)
+		meta := toolResultMeta(tools.StatusFailed, tools.SourceLoop)
+		notice, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg, meta)
 		if err != nil {
 			return err
 		}
@@ -511,7 +512,8 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 	}
 	if !granted {
 		errMsg := fmt.Sprintf("Permission denied for tool: %s", toolName)
-		notice, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg)
+		meta := toolResultMeta(tools.StatusDeclined, tools.SourcePermission)
+		notice, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg, meta)
 		if err != nil {
 			return err
 		}
@@ -556,7 +558,8 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 			return context.Canceled
 		}
 		errMsg := fmt.Sprintf("Tool execution error: %v", err)
-		notice, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg)
+		meta := toolResultMeta(tools.StatusFailed, sourceForTool(tool))
+		notice, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg, meta)
 		if err != nil {
 			return err
 		}
@@ -572,7 +575,8 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 
 	if result == nil {
 		errMsg := fmt.Sprintf("Tool %s returned no result", toolName)
-		notice, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg)
+		meta := toolResultMeta(tools.StatusFailed, sourceForTool(tool))
+		notice, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg, meta)
 		if err != nil {
 			return err
 		}
@@ -594,7 +598,7 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 			return context.Canceled
 		}
 		errMsg := result.Error.Error()
-		notice, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg)
+		notice, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg, result.Meta)
 		if err != nil {
 			return err
 		}
@@ -614,7 +618,7 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 		return context.Canceled
 	}
 
-	notice, err := ex.addToolResultWithFallback(ctx, tc.ID, result.Content)
+	notice, err := ex.addToolResultWithFallback(ctx, tc.ID, result.Content, result.Meta)
 	if err != nil {
 		return err
 	}
@@ -654,9 +658,36 @@ func (ex *executor) addReturnedResultMeta(result *tools.Result, duration time.Du
 	}
 }
 
+func toolResultMeta(status, source string) map[string]any {
+	meta := map[string]any{}
+	if status != "" {
+		meta[tools.MetaStatus] = status
+	}
+	if source != "" {
+		meta[tools.MetaSource] = source
+	}
+	return meta
+}
+
+func sourceForTool(tool tools.Tool) string {
+	switch tools.CapabilitiesForTool(tool).Kind {
+	case tools.KindFilesystem:
+		return tools.SourceFS
+	case tools.KindShell:
+		return tools.SourceShell
+	case tools.KindSkill:
+		return tools.SourceSkill
+	case tools.KindMCP:
+		return tools.SourceMCP
+	default:
+		return tools.SourceLoop
+	}
+}
+
 func (ex *executor) handleInterruptedToolCall(tc llm.ToolCall, partialOutput string) error {
 	content := interruptedToolResultContent(partialOutput)
-	notice, err := ex.addToolResultWithFallback(context.Background(), tc.ID, content)
+	meta := toolResultMeta(tools.StatusInterrupted, tools.SourceLoop)
+	notice, err := ex.addToolResultWithFallback(context.Background(), tc.ID, content, meta)
 	if err != nil {
 		return err
 	}
@@ -815,7 +846,7 @@ func (ex *executor) emitContextCompactionNotice(notice *contextCompactionNotice)
 	return nil
 }
 
-func (ex *executor) addToolResult(ctx context.Context, callID, content string) (*contextCompactionNotice, error) {
+func (ex *executor) addToolResult(ctx context.Context, callID, content string, meta map[string]any) (*contextCompactionNotice, error) {
 	msg := llm.NewToolMessage(callID, content)
 	notice, err := ex.addContextMessage(ctx, msg)
 	if err != nil {
@@ -830,18 +861,23 @@ func (ex *executor) addToolResult(ctx context.Context, callID, content string) (
 		if tc := ex.findToolCall(callID); tc != nil {
 			toolCall = *tc
 		}
-		if err := ex.engine.recorder.RecordToolResult(toolCall, content); err != nil {
+		if err := ex.engine.recorder.RecordToolResult(toolCall, content, cloneToolMeta(meta)); err != nil {
 			return nil, err
 		}
 	}
 	return notice, nil
 }
 
-func (ex *executor) addToolResultWithFallback(ctx context.Context, callID, content string) (*contextCompactionNotice, error) {
-	notice, err := ex.addToolResult(ctx, callID, content)
+func (ex *executor) addToolResultWithFallback(ctx context.Context, callID, content string, meta map[string]any) (*contextCompactionNotice, error) {
+	notice, err := ex.addToolResult(ctx, callID, content, meta)
 	if err != nil {
 		fallback := fmt.Sprintf("tool result replaced due to context limit: %v", err)
-		fallbackNotice, fallbackErr := ex.addToolResult(ctx, callID, fallback)
+		fallbackMeta := cloneToolMeta(meta)
+		if fallbackMeta == nil {
+			fallbackMeta = map[string]any{}
+		}
+		fallbackMeta[tools.MetaFallback] = true
+		fallbackNotice, fallbackErr := ex.addToolResult(ctx, callID, fallback, fallbackMeta)
 		if fallbackErr != nil {
 			return nil, fmt.Errorf("persist tool result fallback: %w (original error: %v)", fallbackErr, err)
 		}
@@ -852,6 +888,17 @@ func (ex *executor) addToolResultWithFallback(ctx context.Context, callID, conte
 		return fallbackNotice, nil
 	}
 	return notice, nil
+}
+
+func cloneToolMeta(meta map[string]any) map[string]any {
+	if len(meta) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(meta))
+	for key, value := range meta {
+		out[key] = value
+	}
+	return out
 }
 
 func (ex *executor) findToolCall(callID string) *llm.ToolCall {

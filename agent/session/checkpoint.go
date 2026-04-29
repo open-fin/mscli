@@ -71,6 +71,7 @@ func makeTrajectoryEntry(record any) trajectoryEntry {
 	switch v := record.(type) {
 	case MessageRecord:
 		v.Arguments = append([]byte(nil), v.Arguments...)
+		v.Meta = cloneMeta(v.Meta)
 		return trajectoryEntry{kind: v.Type, message: v}
 	case ResumeStateRecord:
 		v.Messages = cloneMessages(v.Messages)
@@ -89,6 +90,7 @@ func (e trajectoryEntry) record() any {
 	case recordTypeUser, recordTypeAssistant, recordTypeToolCall, recordTypeToolResult, recordTypeSkill, recordTypeCompact:
 		record := e.message
 		record.Arguments = append([]byte(nil), record.Arguments...)
+		record.Meta = cloneMeta(record.Meta)
 		return record
 	case recordTypeResumeState:
 		record := e.resume
@@ -101,6 +103,40 @@ func (e trajectoryEntry) record() any {
 		return record
 	default:
 		panic(fmt.Sprintf("unsupported trajectory entry %q", e.kind))
+	}
+}
+
+func cloneMeta(meta map[string]any) map[string]any {
+	if len(meta) == 0 {
+		return nil
+	}
+	cloned := make(map[string]any, len(meta))
+	for key, value := range meta {
+		cloned[key] = cloneMetaValue(value)
+	}
+	return cloned
+}
+
+func cloneMetaValue(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		return cloneMeta(v)
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = cloneMetaValue(item)
+		}
+		return out
+	case []string:
+		return append([]string(nil), v...)
+	case []map[string]any:
+		out := make([]map[string]any, len(v))
+		for i, item := range v {
+			out[i] = cloneMeta(item)
+		}
+		return out
+	default:
+		return v
 	}
 }
 
