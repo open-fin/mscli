@@ -498,7 +498,7 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 		if err := ex.emitContextCompactionNotice(notice); err != nil {
 			return err
 		}
-		ex.addEvent(NewEvent(EventToolError, errMsg))
+		ex.addToolErrorEvent(toolName, tc.ID, errMsg, meta)
 		return nil
 	}
 
@@ -523,7 +523,7 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 		if err := ex.emitContextCompactionNotice(notice); err != nil {
 			return err
 		}
-		ex.addEvent(NewEvent(EventToolError, errMsg))
+		ex.addToolErrorEvent(toolName, tc.ID, errMsg, meta)
 		return nil
 	}
 
@@ -569,7 +569,7 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 		if err := ex.emitContextCompactionNotice(notice); err != nil {
 			return err
 		}
-		ex.addEvent(NewEvent(EventToolError, errMsg))
+		ex.addToolErrorEvent(toolName, tc.ID, errMsg, meta)
 		return nil
 	}
 
@@ -586,7 +586,7 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 		if err := ex.emitContextCompactionNotice(notice); err != nil {
 			return err
 		}
-		ex.addEvent(NewEvent(EventToolError, errMsg))
+		ex.addToolErrorEvent(toolName, tc.ID, errMsg, meta)
 		return nil
 	}
 
@@ -608,7 +608,7 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 		if err := ex.emitContextCompactionNotice(notice); err != nil {
 			return err
 		}
-		ex.addEvent(NewEvent(EventToolError, fmt.Sprintf("Tool %s failed: %s", toolName, errMsg)))
+		ex.addToolErrorEvent(toolName, tc.ID, fmt.Sprintf("Tool %s failed: %s", toolName, errMsg), result.Meta)
 		return nil
 	}
 	if errors.Is(ctx.Err(), context.Canceled) {
@@ -702,6 +702,7 @@ func (ex *executor) handleInterruptedToolCall(tc llm.ToolCall, partialOutput str
 	ev.ToolName = tc.Function.Name
 	ev.ToolCallID = tc.ID
 	ev.Summary = "interrupted"
+	ev.Meta = meta
 	ex.addEvent(ev)
 	return nil
 }
@@ -755,6 +756,14 @@ func (ex *executor) addStreamingToolEvent(toolName, toolCallID string, update to
 	ev.ToolName = toolName
 	ev.ToolCallID = toolCallID
 	ev.Summary = update.Summary
+	ex.addEvent(ev)
+}
+
+func (ex *executor) addToolErrorEvent(toolName, toolCallID, message string, meta map[string]any) {
+	ev := NewEvent(EventToolError, message)
+	ev.ToolName = toolName
+	ev.ToolCallID = toolCallID
+	ev.Meta = cloneToolMeta(meta)
 	ex.addEvent(ev)
 }
 

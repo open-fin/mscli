@@ -553,6 +553,9 @@ func TestRunPersistsInterruptedToolResultBeforeInterruptedRender(t *testing.T) {
 	if got, want := interrupted.Summary, "interrupted"; got != want {
 		t.Fatalf("ToolInterrupted summary = %q, want %q", got, want)
 	}
+	if got := interrupted.Meta[tools.MetaStatus]; got != tools.StatusInterrupted {
+		t.Fatalf("ToolInterrupted status meta = %#v, want interrupted", got)
+	}
 	if got, want := interrupted.Message, "partial line"; got != want {
 		t.Fatalf("ToolInterrupted message = %q, want %q", got, want)
 	}
@@ -675,4 +678,52 @@ func TestRunPersistsToolErrorBeforeErrorRender(t *testing.T) {
 	// skip it entirely — verify error handling order instead.
 	requireOrder(t, log, "tool_call:missing_tool", "snapshot:tool_call:missing_tool")
 	requireOrder(t, log, "tool_result:missing_tool", "snapshot:tool_result:missing_tool", "ui:ToolError")
+}
+
+func TestRunToolErrorEventIncludesFailureMetadata(t *testing.T) {
+	args, err := json.Marshal(map[string]string{"path": "missing.txt"})
+	if err != nil {
+		t.Fatalf("marshal tool args: %v", err)
+	}
+
+	provider := &scriptedStreamProvider{
+		responses: []*llm.CompletionResponse{
+			{
+				ToolCalls: []llm.ToolCall{{
+					ID:   "call-missing-meta",
+					Type: "function",
+					Function: llm.ToolCallFunc{
+						Name:      "missing_tool",
+						Arguments: args,
+					},
+				}},
+				FinishReason: llm.FinishToolCalls,
+			},
+			{Content: "done", FinishReason: llm.FinishStop},
+		},
+	}
+	engine := NewEngine(EngineConfig{MaxIterations: 2, ContextWindow: 4096}, provider, tools.NewRegistry())
+
+	var errorEvent *Event
+	err = engine.RunWithContextStream(context.Background(), Task{
+		ID:          "tool-error-meta",
+		Description: "use missing tool",
+	}, func(ev Event) {
+		if ev.Type == EventToolError {
+			copy := ev
+			errorEvent = &copy
+		}
+	})
+	if err != nil {
+		t.Fatalf("RunWithContextStream failed: %v", err)
+	}
+	if errorEvent == nil {
+		t.Fatal("missing ToolError event")
+	}
+	if got := errorEvent.Meta[tools.MetaStatus]; got != tools.StatusFailed {
+		t.Fatalf("status meta = %#v, want failed", got)
+	}
+	if got := errorEvent.Meta[tools.MetaSource]; got != tools.SourceLoop {
+		t.Fatalf("source meta = %#v, want loop", got)
+	}
 }
