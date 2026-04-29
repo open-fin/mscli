@@ -496,7 +496,7 @@ func TestCmdMCPReconnectReplacesStaleServerTools(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	fakeMgr := newFakeMCPManager()
 	registry := tools.NewRegistry()
-	registerMCPToolDefinitions(registry, fakeMgr, []runtimemcp.ToolDefinition{mcpDef("echo", "old")}, nil)
+	registerMCPToolDefinitions(registry, fakeMgr, []runtimemcp.ToolDefinition{mcpDef("echo", "old")}, nil, nil)
 	fakeMgr.tools["echo"] = []runtimemcp.ToolDefinition{mcpDef("echo", "new")}
 	app := &Application{EventCh: make(chan model.Event, 8), WorkDir: t.TempDir(), mcpManager: fakeMgr, toolRegistry: registry}
 	restore := stubMCPRuntime(t,
@@ -526,7 +526,7 @@ func TestCmdMCPDisableWritesLocalStateAndClosesServer(t *testing.T) {
 	registerMCPToolDefinitions(registry, fakeMgr, []runtimemcp.ToolDefinition{
 		mcpDef("echo", "tool"),
 		mcpDef("other", "tool"),
-	}, nil)
+	}, nil, nil)
 	app := &Application{EventCh: make(chan model.Event, 8), WorkDir: workDir, mcpManager: fakeMgr, toolRegistry: registry}
 
 	app.handleCommand("/mcp disable echo")

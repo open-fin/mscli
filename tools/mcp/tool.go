@@ -4,45 +4,56 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
-	"regexp"
 	"strings"
-	"time"
 
 	"gitcode.com/mindspore/mscli/integrations/llm"
+	"gitcode.com/mindspore/mscli/runtime/artifacts"
 	runtimemcp "gitcode.com/mindspore/mscli/runtime/mcp"
 	"gitcode.com/mindspore/mscli/tools"
 )
 
 const maxResultContent = 64 * 1024
 
-var safePersistNamePattern = regexp.MustCompile(`[^A-Za-z0-9_-]+`)
-
 // Caller is the runtime dependency used to execute MCP tools.
 type Caller interface {
 	CallTool(ctx context.Context, serverName, toolName string, args json.RawMessage) (*runtimemcp.CallResult, error)
 }
 
+type ArtifactWriteRequest = artifacts.WriteRequest
+type Artifact = artifacts.Artifact
+
+type ArtifactStore interface {
+	Write(ArtifactWriteRequest) (Artifact, error)
+}
+
 // Tool adapts a discovered MCP tool to the local tools.Tool interface.
 type Tool struct {
-	def    runtimemcp.ToolDefinition
-	caller Caller
+	def           runtimemcp.ToolDefinition
+	caller        Caller
+	artifactStore ArtifactStore
 }
 
 // NewTool creates an MCP tool adapter.
 func NewTool(def runtimemcp.ToolDefinition, caller Caller) *Tool {
+	return NewToolWithArtifactStore(def, caller, nil)
+}
+
+func NewToolWithArtifactStore(def runtimemcp.ToolDefinition, caller Caller, store ArtifactStore) *Tool {
 	if strings.TrimSpace(def.Name) == "" {
 		def.Name = runtimemcp.BuildToolName(def.ServerName, def.OriginalToolName)
 	}
-	return &Tool{def: def, caller: caller}
+	return &Tool{def: def, caller: caller, artifactStore: store}
 }
 
 // WrapTools creates tool adapters for discovered MCP tool definitions.
 func WrapTools(defs []runtimemcp.ToolDefinition, caller Caller) []tools.Tool {
+	return WrapToolsWithArtifactStore(defs, caller, nil)
+}
+
+func WrapToolsWithArtifactStore(defs []runtimemcp.ToolDefinition, caller Caller, store ArtifactStore) []tools.Tool {
 	out := make([]tools.Tool, 0, len(defs))
 	for _, def := range defs {
-		out = append(out, NewTool(def, caller))
+		out = append(out, NewToolWithArtifactStore(def, caller, store))
 	}
 	return out
 }
@@ -96,8 +107,16 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (*tools.Result,
 	}
 	contentType := mcpContentType(result, false)
 	if len(content) > maxResultContent {
-		content = persistLargeResultNotice(content, t.def.ServerName, t.def.OriginalToolName, result)
+		var artifact *Artifact
+		content, artifact = t.persistLargeResultNotice(content, result)
 		contentType = mcpContentType(result, true)
+		if artifact != nil {
+			out := t.withMeta(tools.StringResultWithSummary(content, fmt.Sprintf("mcp %s/%s", t.def.ServerName, t.def.OriginalToolName)), tools.StatusCompleted, artifact.ContentType)
+			tools.SetResultArtifact(out, artifact.Path, artifact.RelativePath)
+			tools.SetResultBytes(out, artifact.Size)
+			tools.SetResultTruncated(out, true)
+			return out, nil
+		}
 	}
 	return t.withMeta(tools.StringResultWithSummary(content, fmt.Sprintf("mcp %s/%s", t.def.ServerName, t.def.OriginalToolName)), tools.StatusCompleted, contentType), nil
 }
@@ -157,56 +176,21 @@ func formatCallResult(result *runtimemcp.CallResult) string {
 	return content
 }
 
-func persistLargeResultNotice(content, serverName, toolName string, result *runtimemcp.CallResult) string {
-	path, err := persistLargeResult(content, serverName, toolName)
+func (t *Tool) persistLargeResultNotice(content string, result *runtimemcp.CallResult) (string, *Artifact) {
+	if t.artifactStore == nil {
+		return fmt.Sprintf("Error: result (%s characters) exceeds maximum allowed tokens. No artifact store is configured. If this MCP server provides pagination or filtering tools, use them to retrieve specific portions of the data.", formatInt(len(content))), nil
+	}
+	contentType := ContentTypeForMCPArtifact(result)
+	artifact, err := t.artifactStore.Write(ArtifactWriteRequest{
+		Prefix:      "mcp",
+		Name:        fmt.Sprintf("%s-%s", t.def.ServerName, t.def.OriginalToolName),
+		ContentType: contentType,
+		Data:        []byte(content),
+	})
 	if err != nil {
-		return fmt.Sprintf("Error: result (%s characters) exceeds maximum allowed tokens. Failed to save output to file: %v. If this MCP server provides pagination or filtering tools, use them to retrieve specific portions of the data.", formatInt(len(content)), err)
+		return fmt.Sprintf("Error: result (%s characters) exceeds maximum allowed tokens. Failed to save output to file: %v. If this MCP server provides pagination or filtering tools, use them to retrieve specific portions of the data.", formatInt(len(content)), err), nil
 	}
-	return fmt.Sprintf("Error: result (%s characters) exceeds maximum allowed tokens. Output has been saved to %s.\nFormat: %s\nIf this MCP server provides pagination or filtering tools, use them to retrieve specific portions of the data.", formatInt(len(content)), path, resultFormatDescription(result))
-}
-
-func persistLargeResult(content, serverName, toolName string) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve home directory: %w", err)
-	}
-	workspace, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("resolve workspace: %w", err)
-	}
-	workspaceAbs, err := filepath.Abs(workspace)
-	if err != nil {
-		return "", fmt.Errorf("resolve workspace path: %w", err)
-	}
-	dir := filepath.Join(home, ".mscli", "projects", workspaceKey(workspaceAbs), "tool-results")
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", fmt.Errorf("create tool-results directory: %w", err)
-	}
-	name := fmt.Sprintf("mcp-%s-%s-%d.txt", safePersistName(serverName), safePersistName(toolName), time.Now().UnixMilli())
-	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		return "", fmt.Errorf("write tool result: %w", err)
-	}
-	return path, nil
-}
-
-func workspaceKey(workspace string) string {
-	key := strings.ReplaceAll(workspace, string(filepath.Separator), "-")
-	key = strings.ReplaceAll(key, ":", "-")
-	key = strings.Trim(key, "-")
-	if key == "" {
-		return "workspace"
-	}
-	return key
-}
-
-func safePersistName(name string) string {
-	name = safePersistNamePattern.ReplaceAllString(strings.TrimSpace(name), "_")
-	name = strings.Trim(name, "_")
-	if name == "" {
-		return "tool"
-	}
-	return name
+	return fmt.Sprintf("Error: result (%s characters) exceeds maximum allowed tokens. Output has been saved to %s.\nFormat: %s\nIf this MCP server provides pagination or filtering tools, use them to retrieve specific portions of the data.", formatInt(len(content)), artifact.Path, resultFormatDescription(result)), &artifact
 }
 
 func resultFormatDescription(result *runtimemcp.CallResult) string {

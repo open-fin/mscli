@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"gitcode.com/mindspore/mscli/runtime/artifacts"
 	runtimemcp "gitcode.com/mindspore/mscli/runtime/mcp"
 	"gitcode.com/mindspore/mscli/tools"
 	mcptool "gitcode.com/mindspore/mscli/tools/mcp"
@@ -119,7 +120,8 @@ func initMCPTools(ctx context.Context, registry *tools.Registry, workDir string,
 		}
 	}
 
-	registerMCPToolDefinitions(registry, manager, dedupeMCPTools(candidates, &events), &events)
+	artifactStore := artifacts.Store{HomeDir: home, WorkspaceRoot: workspaceRoot}
+	registerMCPToolDefinitions(registry, manager, dedupeMCPTools(candidates, &events), &events, artifactStore)
 
 	return manager, events, nil
 }
@@ -192,12 +194,12 @@ func normalizeMCPToolDefinitions(server runtimemcp.ScopedServer, defs []runtimem
 	return out
 }
 
-func registerMCPToolDefinitions(registry *tools.Registry, manager runtimemcp.Manager, defs []runtimemcp.ToolDefinition, events *[]model.Event) {
+func registerMCPToolDefinitions(registry *tools.Registry, manager runtimemcp.Manager, defs []runtimemcp.ToolDefinition, events *[]model.Event, artifactStore mcptool.ArtifactStore) {
 	if registry == nil {
 		emitMCPWarning(events, "register mcp tools: tool registry is nil")
 		return
 	}
-	for _, tool := range mcptool.WrapTools(defs, manager) {
+	for _, tool := range mcptool.WrapToolsWithArtifactStore(defs, manager, artifactStore) {
 		if _, ok := registry.Get(tool.Name()); ok {
 			continue
 		}

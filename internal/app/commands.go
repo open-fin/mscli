@@ -238,7 +238,7 @@ func (a *Application) reconnectMCPServer(ctx context.Context, workspaceRoot stri
 		return err
 	}
 	unregisterMCPServerTools(a.toolRegistry, server.Name)
-	registerMCPToolDefinitions(a.toolRegistry, manager, normalizeMCPToolDefinitions(server, defs), nil)
+	registerMCPToolDefinitions(a.toolRegistry, manager, normalizeMCPToolDefinitions(server, defs), nil, nil)
 	return nil
 }
 

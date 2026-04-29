@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"gitcode.com/mindspore/mscli/runtime/artifacts"
 	runtimemcp "gitcode.com/mindspore/mscli/runtime/mcp"
 	"gitcode.com/mindspore/mscli/tools"
 )
@@ -159,14 +160,14 @@ func TestToolPersistsLargeResults(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Chdir(workDir)
 	large := strings.Repeat("x", maxResultContent+100)
-	tool := NewTool(runtimemcp.ToolDefinition{
+	tool := NewToolWithArtifactStore(runtimemcp.ToolDefinition{
 		ServerName:       "server",
 		OriginalToolName: "tool",
 	}, &fakeCaller{result: &runtimemcp.CallResult{
 		Content: []runtimemcp.ContentBlock{
 			{Type: "text", Text: large},
 		},
-	}})
+	}}, artifacts.Store{HomeDir: home, WorkspaceRoot: workDir})
 	result, err := tool.Execute(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("Execute() err = %v", err)
@@ -190,6 +191,39 @@ func TestToolPersistsLargeResults(t *testing.T) {
 	}
 	if got := result.Meta[tools.MetaContentType]; got != tools.ContentTypeText {
 		t.Fatalf("content type = %#v, want text/plain", got)
+	}
+}
+
+func TestToolPersistsLargeResultsWithArtifactStore(t *testing.T) {
+	store := &fakeArtifactStore{}
+	large := strings.Repeat("x", maxResultContent+100)
+	tool := NewToolWithArtifactStore(runtimemcp.ToolDefinition{
+		ServerName:       "server",
+		OriginalToolName: "tool",
+	}, &fakeCaller{result: &runtimemcp.CallResult{
+		Content: []runtimemcp.ContentBlock{{Type: "text", Text: large}},
+	}}, store)
+
+	result, err := tool.Execute(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Execute() err = %v", err)
+	}
+	if !store.called {
+		t.Fatal("artifact store was not called")
+	}
+	if string(store.data) != large {
+		t.Fatalf("stored data len = %d, want %d", len(store.data), len(large))
+	}
+	for key, want := range map[string]any{
+		tools.MetaArtifactPath:         "/tmp/artifact.txt",
+		tools.MetaArtifactRelativePath: "projects/ws/tool-results/artifact.txt",
+		tools.MetaBytes:                int64(len(large)),
+		tools.MetaTruncated:            true,
+		tools.MetaContentType:          tools.ContentTypeText,
+	} {
+		if got := result.Meta[key]; got != want {
+			t.Fatalf("Meta[%s] = %#v, want %#v (meta %#v)", key, got, want, result.Meta)
+		}
 	}
 }
 
@@ -221,4 +255,20 @@ func (f *fakeCaller) CallTool(ctx context.Context, serverName, toolName string, 
 	f.calledTool = toolName
 	f.calledArgs = append(json.RawMessage(nil), args...)
 	return f.result, f.err
+}
+
+type fakeArtifactStore struct {
+	called bool
+	data   []byte
+}
+
+func (f *fakeArtifactStore) Write(req ArtifactWriteRequest) (Artifact, error) {
+	f.called = true
+	f.data = append([]byte(nil), req.Data...)
+	return Artifact{
+		Path:         "/tmp/artifact.txt",
+		RelativePath: "projects/ws/tool-results/artifact.txt",
+		Size:         int64(len(req.Data)),
+		ContentType:  req.ContentType,
+	}, nil
 }
