@@ -12,7 +12,7 @@ internal/app
   -> agent/loop
   -> tools.Registry
   -> tools/fs, tools/shell, tools/skills, tools/mcp
-  -> runtime/shell or runtime/mcp
+  -> runtime/shell, runtime/mcp, or runtime/artifacts
 ```
 
 `internal/app` wires configuration, permissions, sessions, MCP startup, and UI
@@ -30,7 +30,8 @@ same `tools.Tool` interface.
 
 `runtime` owns lower-level execution systems. `runtime/shell` runs stateful shell
 commands inside the workspace. `runtime/mcp` owns MCP configuration, approval
-filtering, server lifecycle, tool listing, and tool calls.
+filtering, server lifecycle, tool listing, and tool calls. `runtime/artifacts`
+owns state-root paths for large tool-result artifacts.
 
 ## Current Tools
 
@@ -56,14 +57,14 @@ project server approval when needed, starts approved servers through
 tool registry.
 
 MCP adapters preserve the exposed registry name, original server name, and
-original tool name. Large MCP results are currently persisted as local
-tool-result files and replaced with a model-facing notice. The target runtime
-moves that path policy into a shared artifact store.
+original tool name. Large MCP results are persisted through `runtime/artifacts`
+and replaced with a model-facing notice.
 
-## Target Contracts
+## Runtime Contracts
 
-Every registered tool should expose capability metadata through an optional
-interface. Unknown tools use conservative defaults.
+Every registered built-in and MCP tool exposes capability metadata through the
+optional `tools.CapabilityProvider` interface. Unknown tools use conservative
+defaults: unknown kind, mutating, long-running, and risk `unknown`.
 
 Tool results carry standard metadata in `tools.Result.Meta`. Standard keys
 include status, duration, source, exit code, truncation, artifact paths, content
@@ -74,8 +75,14 @@ Tool result metadata is persisted with session trajectory records and replayed
 into UI events. Start events are reconstructed from existing tool-call records in
 this cycle; tool-call/start metadata is not expanded here.
 
-Large tool outputs should use a shared artifact store under the mscli state root
-instead of adapter-local path logic.
+Large tool outputs use the shared artifact store under:
+
+```text
+~/.mscli/projects/<workspace-key>/tool-results/
+```
+
+Artifact metadata includes absolute path, state-relative path, byte size,
+content type, and truncation state.
 
 Lifecycle events keep the current external event names for UI compatibility.
 Terminal state is represented as result metadata:
@@ -85,6 +92,14 @@ completed | failed | interrupted | declined
 ```
 
 Started and streaming output remain represented by their event types.
+
+## Session Replay
+
+Tool result metadata is written to `trajectory.jsonl` on `tool_result` records.
+Replay copies that metadata back to UI events. Older records without `meta`
+continue to load and replay. Known numeric metadata keys are normalized after
+load so `duration_ms` and `bytes` are usable as `int64`, while `exit_code` is
+usable as `int`.
 
 ## Package Ownership
 
@@ -106,4 +121,3 @@ Started and streaming output remain represented by their event types.
 5. Add a shared artifact store and route large MCP results through it.
 6. Normalize lifecycle metadata while preserving UI compatibility.
 7. Update architecture and MCP docs after verification.
-

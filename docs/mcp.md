@@ -126,3 +126,24 @@ names in permission rules, for example:
 mcp__github__*
 mcp__puppeteer__puppeteer_navigate
 ```
+
+## Large Results
+
+MCP tool results larger than the model-facing limit are written as tool-result
+artifacts and replaced with a short notice in the tool output. Artifacts are
+stored under:
+
+```text
+~/.mscli/projects/<workspace-key>/tool-results/
+```
+
+The tool result metadata includes:
+
+- `artifact_path`: absolute local path
+- `artifact_relative_path`: path relative to `~/.mscli`
+- `bytes`: full artifact size
+- `content_type`: `text/plain` or `application/json`
+- `truncated`: `true` when the model-facing output was replaced by a notice
+
+MCP result metadata also includes `source=mcp`, the MCP `server`, the original
+MCP `tool`, and terminal `status`.

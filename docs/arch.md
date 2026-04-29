@@ -35,6 +35,7 @@ mindspore-cli/
     skills/                skill listing, loading, and metadata (embedded at build time)
   permission/              permission policy, types, store, safe command allowlist
   runtime/
+    artifacts/             state-root artifact writer for large tool results
     mcp/                   MCP config, approvals, stdio JSON-RPC, and server lifecycle
     shell/                 stateful shell command runner
     probes/                local and target readiness probes
@@ -70,7 +71,7 @@ runTask:
   -> agent/loop.Engine.RunWithContext(task)
   -> tools.Registry
   -> tools/fs, tools/shell, tools/skills, or tools/mcp
-  -> runtime/shell.Runner or runtime/mcp.Manager
+  -> runtime/shell.Runner, runtime/mcp.Manager, or runtime/artifacts.Store
   -> loop.Event stream -> model.Event -> ui
 ```
 
@@ -145,6 +146,11 @@ Free text uses the base system prompt which includes skill summaries
   Owns MCP config discovery, project approval filtering, precedence merge,
   stdio JSON-RPC clients, server process lifecycle, tool listing, tool calls,
   stderr diagnostics, cancellation cleanup, and reconnect behavior.
+
+- **`runtime/artifacts/`**
+  Owns state-root artifact path construction and filename sanitization for large
+  tool results. Current artifacts are scoped under
+  `~/.mscli/projects/<workspace-key>/tool-results/`.
 
 - **`runtime/shell/`**
   Stateful command runner with workspace, timeout, and safety checks.
