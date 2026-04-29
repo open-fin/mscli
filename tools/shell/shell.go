@@ -39,6 +39,17 @@ func (t *ShellTool) Name() string {
 	return "shell"
 }
 
+func (t *ShellTool) Capabilities() tools.Capabilities {
+	return tools.Capabilities{
+		Kind:              tools.KindShell,
+		MutatesWorkspace:  true,
+		LongRunning:       true,
+		SupportsStreaming: true,
+		ResultTypes:       []string{tools.ResultTypeText},
+		Risk:              "high",
+	}
+}
+
 // Description returns the tool description.
 func (t *ShellTool) Description() string {
 	return "Execute a shell command. Use this for running tests, building, git operations, etc. Commands have a timeout and destructive operations may require confirmation."

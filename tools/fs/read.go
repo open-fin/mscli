@@ -35,6 +35,15 @@ func (t *ReadTool) Name() string {
 	return "read"
 }
 
+func (t *ReadTool) Capabilities() tools.Capabilities {
+	return tools.Capabilities{
+		Kind:        tools.KindFilesystem,
+		ReadOnly:    true,
+		ResultTypes: []string{tools.ResultTypeText},
+		Risk:        "low",
+	}
+}
+
 // Description returns the tool description.
 func (t *ReadTool) Description() string {
 	return "Read the contents of a file. Use this when you need to examine file contents."

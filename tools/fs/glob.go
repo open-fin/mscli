@@ -28,6 +28,15 @@ func (t *GlobTool) Name() string {
 	return "glob"
 }
 
+func (t *GlobTool) Capabilities() tools.Capabilities {
+	return tools.Capabilities{
+		Kind:        tools.KindFilesystem,
+		ReadOnly:    true,
+		ResultTypes: []string{tools.ResultTypeText},
+		Risk:        "low",
+	}
+}
+
 // Description returns the tool description.
 func (t *GlobTool) Description() string {
 	return "Find files matching a glob pattern. Use this to explore project structure and find specific file types."

@@ -55,6 +55,17 @@ func (t *Tool) MCPServerName() string {
 	return t.def.ServerName
 }
 
+func (t *Tool) Capabilities() tools.Capabilities {
+	return tools.Capabilities{
+		Kind:             tools.KindMCP,
+		MutatesWorkspace: true,
+		NetworkAccess:    true,
+		LongRunning:      true,
+		ResultTypes:      []string{tools.ResultTypeText, tools.ResultTypeJSON, tools.ResultTypeArtifact},
+		Risk:             "unknown",
+	}
+}
+
 func (t *Tool) Description() string {
 	description := strings.TrimSpace(t.def.Description)
 	prefix := fmt.Sprintf("MCP tool %s/%s", t.def.ServerName, t.def.OriginalToolName)

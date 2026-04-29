@@ -27,6 +27,15 @@ func (t *WriteTool) Name() string {
 	return "write"
 }
 
+func (t *WriteTool) Capabilities() tools.Capabilities {
+	return tools.Capabilities{
+		Kind:             tools.KindFilesystem,
+		MutatesWorkspace: true,
+		ResultTypes:      []string{tools.ResultTypeText},
+		Risk:             "medium",
+	}
+}
+
 // Description returns the tool description.
 func (t *WriteTool) Description() string {
 	return "Create a new file or overwrite an existing file with new content. Arguments must be a JSON object containing required fields path and content."

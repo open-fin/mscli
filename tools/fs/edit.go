@@ -26,6 +26,15 @@ func (t *EditTool) Name() string {
 	return "edit"
 }
 
+func (t *EditTool) Capabilities() tools.Capabilities {
+	return tools.Capabilities{
+		Kind:             tools.KindFilesystem,
+		MutatesWorkspace: true,
+		ResultTypes:      []string{tools.ResultTypeText},
+		Risk:             "medium",
+	}
+}
+
 // Description returns the tool description.
 func (t *EditTool) Description() string {
 	return "Edit a file by replacing specific text. Use this for making targeted changes. The old_string must match exactly including whitespace."

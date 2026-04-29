@@ -22,6 +22,16 @@ func NewLoadSkillTool(loader *skillslib.Loader) *LoadSkillTool {
 
 func (t *LoadSkillTool) Name() string { return "load_skill" }
 
+func (t *LoadSkillTool) Capabilities() tools.Capabilities {
+	return tools.Capabilities{
+		Kind:           tools.KindSkill,
+		ReadOnly:       true,
+		MutatesContext: true,
+		ResultTypes:    []string{tools.ResultTypeText},
+		Risk:           "medium",
+	}
+}
+
 func (t *LoadSkillTool) Description() string {
 	return "Load a skill's detailed instructions into the conversation. " +
 		"Call this when the user's task matches an available skill. " +

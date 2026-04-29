@@ -28,6 +28,15 @@ func (t *GrepTool) Name() string {
 	return "grep"
 }
 
+func (t *GrepTool) Capabilities() tools.Capabilities {
+	return tools.Capabilities{
+		Kind:        tools.KindFilesystem,
+		ReadOnly:    true,
+		ResultTypes: []string{tools.ResultTypeText},
+		Risk:        "low",
+	}
+}
+
 // Description returns the tool description.
 func (t *GrepTool) Description() string {
 	return "Search for patterns in files using regular expressions. Returns matching lines with file names and line numbers."

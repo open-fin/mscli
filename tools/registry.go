@@ -99,6 +99,23 @@ func (r *Registry) Names() []string {
 	return names
 }
 
+// CapabilityList returns tool capabilities in registration order.
+func (r *Registry) CapabilityList() []ToolCapability {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	list := make([]ToolCapability, 0, len(r.tools))
+	for _, name := range r.order {
+		if t, ok := r.tools[name]; ok {
+			list = append(list, ToolCapability{
+				Name:         name,
+				Capabilities: CapabilitiesForTool(t),
+			})
+		}
+	}
+	return list
+}
+
 // Count returns the number of registered tools.
 func (r *Registry) Count() int {
 	r.mu.RLock()

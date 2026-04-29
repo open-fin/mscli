@@ -133,6 +133,58 @@ func (t plainStubTool) Execute(context.Context, json.RawMessage) (*Result, error
 	return StringResult("ok"), nil
 }
 
+func TestCapabilitiesForToolUsesConservativeFallback(t *testing.T) {
+	got := CapabilitiesForTool(plainStubTool{name: "plain"})
+	if got.Kind != KindUnknown {
+		t.Fatalf("Kind = %q, want %q", got.Kind, KindUnknown)
+	}
+	if got.ReadOnly {
+		t.Fatal("ReadOnly = true, want false for unknown tool")
+	}
+	if !got.MutatesWorkspace {
+		t.Fatal("MutatesWorkspace = false, want true for conservative fallback")
+	}
+	if !got.LongRunning {
+		t.Fatal("LongRunning = false, want true for conservative fallback")
+	}
+	if got.Risk != "unknown" {
+		t.Fatalf("Risk = %q, want unknown", got.Risk)
+	}
+}
+
+func TestRegistryCapabilityListPreservesRegistrationOrder(t *testing.T) {
+	registry := NewRegistry()
+	if err := registry.Register(capabilityTool{name: "one", kind: KindFilesystem}); err != nil {
+		t.Fatalf("Register one: %v", err)
+	}
+	if err := registry.Register(capabilityTool{name: "two", kind: KindShell}); err != nil {
+		t.Fatalf("Register two: %v", err)
+	}
+
+	got := registry.CapabilityList()
+	if len(got) != 2 {
+		t.Fatalf("CapabilityList len = %d, want 2", len(got))
+	}
+	if got[0].Name != "one" || got[0].Capabilities.Kind != KindFilesystem {
+		t.Fatalf("CapabilityList[0] = %#v, want filesystem one", got[0])
+	}
+	if got[1].Name != "two" || got[1].Capabilities.Kind != KindShell {
+		t.Fatalf("CapabilityList[1] = %#v, want shell two", got[1])
+	}
+}
+
+type capabilityTool struct {
+	plainStubTool
+	name string
+	kind Kind
+}
+
+func (c capabilityTool) Name() string { return c.name }
+
+func (c capabilityTool) Capabilities() Capabilities {
+	return Capabilities{Kind: c.kind, ReadOnly: true, Risk: "low"}
+}
+
 func llmToolNames(tools []llm.Tool) []string {
 	names := make([]string, 0, len(tools))
 	for _, tool := range tools {
