@@ -14,12 +14,18 @@ import (
 
 // WriteTool writes or creates file contents.
 type WriteTool struct {
-	workDir string
+	workDir     string
+	pathOptions PathOptions
 }
 
 // NewWriteTool creates a new write tool.
 func NewWriteTool(workDir string) *WriteTool {
-	return &WriteTool{workDir: workDir}
+	return NewWriteToolWithOptions(workDir, PathOptions{})
+}
+
+// NewWriteToolWithOptions creates a new write tool with additional path access.
+func NewWriteToolWithOptions(workDir string, opts PathOptions) *WriteTool {
+	return &WriteTool{workDir: workDir, pathOptions: opts}
 }
 
 // Name returns the tool name.
@@ -75,7 +81,7 @@ func (t *WriteTool) Execute(ctx context.Context, params json.RawMessage) (*tools
 		return tools.ErrorResultf(`invalid_write_args: missing path (required keys: "path","content"; aliases "file_path"/"filename" are fallback only)`), nil
 	}
 
-	fullPath, err := resolveSafePath(t.workDir, path)
+	fullPath, err := resolveSafePathWithOptions(t.workDir, path, t.pathOptions)
 	if err != nil {
 		return tools.ErrorResult(err), nil
 	}

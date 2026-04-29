@@ -1150,6 +1150,61 @@ func TestCleanupExpiredRemovesOnlyStaleSessions(t *testing.T) {
 	}
 }
 
+func TestCleanupExpiredPreservesMemoryAndNonSessionDirs(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	workDir := t.TempDir()
+	stale, err := Create(workDir, "system prompt")
+	if err != nil {
+		t.Fatalf("create stale session: %v", err)
+	}
+	if err := stale.AppendUserInput("stale prompt"); err != nil {
+		t.Fatalf("append stale user input: %v", err)
+	}
+	if err := stale.Activate(); err != nil {
+		t.Fatalf("activate stale session: %v", err)
+	}
+	if err := stale.Close(); err != nil {
+		t.Fatalf("close stale session: %v", err)
+	}
+
+	bucketDir, err := BucketDirForWorkDir(workDir)
+	if err != nil {
+		t.Fatalf("BucketDirForWorkDir() error = %v", err)
+	}
+	memoryDir := filepath.Join(bucketDir, "memory")
+	otherDir := filepath.Join(bucketDir, "not_a_session")
+	for _, dir := range []string{memoryDir, otherDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("MkdirAll(%s) error = %v", dir, err)
+		}
+	}
+
+	staleTime := time.Now().Add(-45 * 24 * time.Hour)
+	for _, path := range []string{filepath.Dir(stale.Path()), stale.Path(), memoryDir, otherDir} {
+		if err := os.Chtimes(path, staleTime, staleTime); err != nil {
+			t.Fatalf("chtimes stale path %s: %v", path, err)
+		}
+	}
+
+	removed, err := CleanupExpired(30 * 24 * time.Hour)
+	if err != nil {
+		t.Fatalf("CleanupExpired() error = %v", err)
+	}
+	if got, want := removed, 1; got != want {
+		t.Fatalf("removed session count = %d, want %d", got, want)
+	}
+	if _, err := os.Stat(filepath.Dir(stale.Path())); !os.IsNotExist(err) {
+		t.Fatalf("expected stale session dir removed, got %v", err)
+	}
+	if _, err := os.Stat(memoryDir); err != nil {
+		t.Fatalf("expected memory dir kept: %v", err)
+	}
+	if _, err := os.Stat(otherDir); err != nil {
+		t.Fatalf("expected non-session dir kept: %v", err)
+	}
+}
+
 func TestPlaybackTimelineInsertsThinkingBetweenUserAndLLMResponse(t *testing.T) {
 	t0 := time.Date(2026, time.March, 27, 10, 0, 0, 0, time.UTC)
 	t1 := t0.Add(2 * time.Second)

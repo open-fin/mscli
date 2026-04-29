@@ -13,12 +13,18 @@ import (
 
 // EditTool edits file contents by replacing text.
 type EditTool struct {
-	workDir string
+	workDir     string
+	pathOptions PathOptions
 }
 
 // NewEditTool creates a new edit tool.
 func NewEditTool(workDir string) *EditTool {
-	return &EditTool{workDir: workDir}
+	return NewEditToolWithOptions(workDir, PathOptions{})
+}
+
+// NewEditToolWithOptions creates a new edit tool with additional path access.
+func NewEditToolWithOptions(workDir string, opts PathOptions) *EditTool {
+	return &EditTool{workDir: workDir, pathOptions: opts}
 }
 
 // Name returns the tool name.
@@ -66,7 +72,7 @@ func (t *EditTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 		return tools.ErrorResult(err), nil
 	}
 
-	fullPath, err := resolveSafePath(t.workDir, p.Path)
+	fullPath, err := resolveSafePathWithOptions(t.workDir, p.Path, t.pathOptions)
 	if err != nil {
 		return tools.ErrorResult(err), nil
 	}

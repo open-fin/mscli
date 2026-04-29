@@ -120,7 +120,7 @@ func TestWireBootstrapKeyAndURLOverrideEnvDuringProviderInit(t *testing.T) {
 func TestInitToolsShellInjectsPythonUnbufferedEnv(t *testing.T) {
 	t.Setenv("PYTHONUNBUFFERED", "")
 
-	registry := initTools(configs.DefaultConfig(), t.TempDir())
+	registry := initTools(configs.DefaultConfig(), t.TempDir(), autoMemoryConfig{Resolved: true, Enabled: false})
 	tool, ok := registry.Get("shell")
 	if !ok {
 		t.Fatal("expected shell tool to be registered")

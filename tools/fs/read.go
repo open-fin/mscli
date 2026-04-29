@@ -18,15 +18,22 @@ const MaxReadBytes = 100_000
 
 // ReadTool reads file contents.
 type ReadTool struct {
-	workDir  string
-	spillDir string
+	workDir     string
+	pathOptions PathOptions
+	spillDir    string
 }
 
 // NewReadTool creates a new read tool.
 func NewReadTool(workDir string) *ReadTool {
+	return NewReadToolWithOptions(workDir, PathOptions{})
+}
+
+// NewReadToolWithOptions creates a new read tool with additional path access.
+func NewReadToolWithOptions(workDir string, opts PathOptions) *ReadTool {
 	return &ReadTool{
-		workDir:  workDir,
-		spillDir: tools.DefaultSpillDir(workDir),
+		workDir:     workDir,
+		pathOptions: opts,
+		spillDir:    tools.DefaultSpillDir(workDir),
 	}
 }
 
@@ -75,7 +82,7 @@ func (t *ReadTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 		return tools.ErrorResult(err), nil
 	}
 
-	fullPath, err := resolveSafePath(t.workDir, p.Path)
+	fullPath, err := resolveSafePathWithOptions(t.workDir, p.Path, t.pathOptions)
 	if err != nil {
 		return tools.ErrorResult(err), nil
 	}

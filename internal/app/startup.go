@@ -8,16 +8,6 @@ import (
 
 const bootReadyToken = "__boot_ready__"
 
-func buildSystemPrompt(summaries []skills.SkillSummary) string {
-	systemPrompt := loop.DefaultSystemPrompt()
-	if len(summaries) == 0 {
-		return systemPrompt
-	}
-	return systemPrompt + "\n\n## Available Skills\n\n" +
-		"Use the load_skill tool to load a skill when the user's task matches one:\n\n" +
-		skills.FormatSummaries(summaries)
-}
-
 // builtinCommandSkills lists skill names that are already registered as
 // built-in slash commands (e.g., /diagnose, /fix). These are not re-registered
 // from the skill catalog to avoid duplicates. Backend agent skills (e.g.,
@@ -63,7 +53,12 @@ func (a *Application) refreshSkillCatalog() {
 	registerSkillCommands(summaries)
 
 	if a.ctxManager != nil {
-		a.ctxManager.SetSystemPrompt(buildSystemPrompt(summaries))
+		systemPrompt, err := a.rebuildSystemPrompt()
+		if err != nil {
+			a.emitToolError("system", "Failed to rebuild system prompt: %v", err)
+			return
+		}
+		a.ctxManager.SetSystemPrompt(systemPrompt)
 	}
 	if err := a.persistSessionSnapshot(); err != nil {
 		a.emitToolError("session", "Failed to persist session snapshot: %v", err)

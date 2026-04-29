@@ -12,7 +12,21 @@ var allowedAbsoluteHomePaths = []string{
 	"~/.mscli/mindspore-skills",
 }
 
+// PathOptions extends filesystem tool path access without changing the
+// default workspace-only behavior.
+type PathOptions struct {
+	AllowedAbsoluteRoots []string
+}
+
+type resolvedPathOptions struct {
+	allowedAbsoluteRoots []string
+}
+
 func resolveSafePath(workDir, input string) (string, error) {
+	return resolveSafePathWithOptions(workDir, input, PathOptions{})
+}
+
+func resolveSafePathWithOptions(workDir, input string, opts PathOptions) (string, error) {
 	if strings.TrimSpace(input) == "" {
 		return "", fmt.Errorf("path is required")
 	}
@@ -22,8 +36,13 @@ func resolveSafePath(workDir, input string) (string, error) {
 		return "", fmt.Errorf("resolve working directory: %w", err)
 	}
 
+	resolvedOpts, err := resolvePathOptions(opts)
+	if err != nil {
+		return "", err
+	}
+
 	cleaned := filepath.Clean(input)
-	normalized, err := normalizeAllowedAbsolutePath(cleaned)
+	normalized, err := normalizeAllowedAbsolutePath(cleaned, resolvedOpts)
 	if err != nil {
 		return "", err
 	}
@@ -41,7 +60,7 @@ func resolveSafePath(workDir, input string) (string, error) {
 			return absPath, nil
 		}
 
-		allowed, err := isAllowedAbsolutePath(absPath)
+		allowed, err := isAllowedAbsolutePath(absPath, resolvedOpts)
 		if err != nil {
 			return "", err
 		}
@@ -78,22 +97,33 @@ func ResolveSafePath(workDir, input string) (string, error) {
 	return resolveSafePath(workDir, input)
 }
 
-func normalizeAllowedAbsolutePath(input string) (string, error) {
-	cleanedSlash := filepath.ToSlash(filepath.Clean(input))
-	if !matchesAllowedHomePath(cleanedSlash) {
+// ResolveSafePathWithOptions exposes path validation with explicit additional
+// absolute roots for app-owned tool wiring.
+func ResolveSafePathWithOptions(workDir, input string, opts PathOptions) (string, error) {
+	return resolveSafePathWithOptions(workDir, input, opts)
+}
+
+func normalizeAllowedAbsolutePath(input string, opts resolvedPathOptions) (string, error) {
+	expanded, ok, err := expandHomePath(input)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
 		return input, nil
 	}
 
-	homeDir, err := os.UserHomeDir()
+	allowed, err := isAllowedAbsolutePath(expanded, opts)
 	if err != nil {
-		return "", fmt.Errorf("resolve home directory: %w", err)
+		return "", err
+	}
+	if !allowed {
+		return input, nil
 	}
 
-	trimmed := strings.TrimPrefix(cleanedSlash, "~/")
-	return filepath.Join(homeDir, filepath.FromSlash(trimmed)), nil
+	return expanded, nil
 }
 
-func isAllowedAbsolutePath(input string) (bool, error) {
+func isAllowedAbsolutePath(input string, opts resolvedPathOptions) (bool, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return false, fmt.Errorf("resolve home directory: %w", err)
@@ -107,16 +137,63 @@ func isAllowedAbsolutePath(input string) (bool, error) {
 		}
 	}
 
+	for _, allowedRoot := range opts.allowedAbsoluteRoots {
+		if pathWithinBase(allowedRoot, input) {
+			return true, nil
+		}
+	}
+
 	return false, nil
 }
 
-func matchesAllowedHomePath(input string) bool {
-	for _, allowedRoot := range allowedAbsoluteHomePaths {
-		if input == allowedRoot || strings.HasPrefix(input, allowedRoot+"/") {
-			return true
+func resolvePathOptions(opts PathOptions) (resolvedPathOptions, error) {
+	roots := make([]string, 0, len(opts.AllowedAbsoluteRoots))
+	seen := make(map[string]struct{}, len(opts.AllowedAbsoluteRoots))
+	for _, root := range opts.AllowedAbsoluteRoots {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
 		}
+		expanded, ok, err := expandHomePath(root)
+		if err != nil {
+			return resolvedPathOptions{}, err
+		}
+		if ok {
+			root = expanded
+		}
+		if !filepath.IsAbs(root) {
+			abs, err := filepath.Abs(root)
+			if err != nil {
+				return resolvedPathOptions{}, fmt.Errorf("resolve allowed absolute root: %w", err)
+			}
+			root = abs
+		}
+		root = filepath.Clean(root)
+		if _, exists := seen[root]; exists {
+			continue
+		}
+		seen[root] = struct{}{}
+		roots = append(roots, root)
 	}
-	return false
+	return resolvedPathOptions{allowedAbsoluteRoots: roots}, nil
+}
+
+func expandHomePath(input string) (string, bool, error) {
+	cleanedSlash := filepath.ToSlash(filepath.Clean(input))
+	if cleanedSlash != "~" && !strings.HasPrefix(cleanedSlash, "~/") {
+		return input, false, nil
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", false, fmt.Errorf("resolve home directory: %w", err)
+	}
+	if cleanedSlash == "~" {
+		return homeDir, true, nil
+	}
+
+	trimmed := strings.TrimPrefix(cleanedSlash, "~/")
+	return filepath.Join(homeDir, filepath.FromSlash(trimmed)), true, nil
 }
 
 func pathWithinBase(base, target string) bool {

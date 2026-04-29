@@ -15,12 +15,18 @@ import (
 
 // GlobTool finds files matching a glob pattern.
 type GlobTool struct {
-	workDir string
+	workDir     string
+	pathOptions PathOptions
 }
 
 // NewGlobTool creates a new glob tool.
 func NewGlobTool(workDir string) *GlobTool {
-	return &GlobTool{workDir: workDir}
+	return NewGlobToolWithOptions(workDir, PathOptions{})
+}
+
+// NewGlobToolWithOptions creates a new glob tool with additional path access.
+func NewGlobToolWithOptions(workDir string, opts PathOptions) *GlobTool {
+	return &GlobTool{workDir: workDir, pathOptions: opts}
 }
 
 // Name returns the tool name.
@@ -78,7 +84,7 @@ func (t *GlobTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 	if p.Path != "" {
 		basePath = p.Path
 	}
-	fullBasePath, err := resolveSafePath(t.workDir, basePath)
+	fullBasePath, err := resolveSafePathWithOptions(t.workDir, basePath, t.pathOptions)
 	if err != nil {
 		return tools.ErrorResult(err), nil
 	}

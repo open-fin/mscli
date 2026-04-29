@@ -15,12 +15,18 @@ import (
 
 // GrepTool searches for patterns in files.
 type GrepTool struct {
-	workDir string
+	workDir     string
+	pathOptions PathOptions
 }
 
 // NewGrepTool creates a new grep tool.
 func NewGrepTool(workDir string) *GrepTool {
-	return &GrepTool{workDir: workDir}
+	return NewGrepToolWithOptions(workDir, PathOptions{})
+}
+
+// NewGrepToolWithOptions creates a new grep tool with additional path access.
+func NewGrepToolWithOptions(workDir string, opts PathOptions) *GrepTool {
+	return &GrepTool{workDir: workDir, pathOptions: opts}
 }
 
 // Name returns the tool name.
@@ -101,7 +107,7 @@ func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 	if p.Path != "" {
 		searchPath = p.Path
 	}
-	fullPath, err := resolveSafePath(t.workDir, searchPath)
+	fullPath, err := resolveSafePathWithOptions(t.workDir, searchPath, t.pathOptions)
 	if err != nil {
 		return tools.ErrorResult(err), nil
 	}

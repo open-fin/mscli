@@ -57,6 +57,7 @@ type Application struct {
 	questionUI              *AskUserQuestionPromptUI
 	permissionSettingsIssue *permissionSettingsIssue
 	session                 *session.Session
+	memoryConfig            autoMemoryConfig
 	replayBacklog           []model.Event
 	replayTimeline          []session.ReplayFrame
 	deferHistoryReplay      bool
@@ -179,7 +180,12 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 		}
 	}
 
-	toolRegistry := initTools(config, workDir)
+	memoryCfg, err := resolveAutoMemoryConfig(workDir)
+	if err != nil {
+		return nil, fmt.Errorf("init memory: %w", err)
+	}
+
+	toolRegistry := initTools(config, workDir, memoryCfg)
 
 	// Skills: embedded skills are extracted next to the executable,
 	// user-installed skills in ~/.mscli/skills/ override them,
@@ -206,8 +212,11 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 	managerCfg.CompactProvider = provider
 	ctxManager := agentctx.NewManager(managerCfg)
 
-	// Build system prompt: base + skill summaries.
-	systemPrompt := buildSystemPrompt(skillLoader.List())
+	// Build system prompt: base + skill summaries + file-backed instructions.
+	systemPrompt, err := buildEffectiveSystemPromptWithMemory(workDir, skillLoader.List(), memoryCfg)
+	if err != nil {
+		return nil, fmt.Errorf("build system prompt: %w", err)
+	}
 
 	var (
 		runtimeSession       *session.Session
@@ -258,6 +267,12 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 						return nil, fmt.Errorf("load %s %s: %w", targetLabel, sessionID, err)
 					}
 					systemPrompt, restoredMessages := runtimeSession.RestoreContext()
+					if !cfg.Replay {
+						systemPrompt, err = buildEffectiveSystemPromptWithMemory(workDir, skillLoader.List(), memoryCfg)
+						if err != nil {
+							return nil, fmt.Errorf("build system prompt: %w", err)
+						}
+					}
 					ctxManager.SetSystemPrompt(systemPrompt)
 					ctxManager.SetNonSystemMessages(restoredMessages)
 					restoreProviderUsageSnapshot(ctxManager, runtimeSession.UsageSnapshot())
@@ -272,7 +287,11 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 				if err != nil {
 					return nil, fmt.Errorf("load latest session: %w", err)
 				}
-				systemPrompt, restoredMessages := runtimeSession.RestoreContext()
+				_, restoredMessages := runtimeSession.RestoreContext()
+				systemPrompt, err = buildEffectiveSystemPromptWithMemory(workDir, skillLoader.List(), memoryCfg)
+				if err != nil {
+					return nil, fmt.Errorf("build system prompt: %w", err)
+				}
 				ctxManager.SetSystemPrompt(systemPrompt)
 				ctxManager.SetNonSystemMessages(restoredMessages)
 				restoreProviderUsageSnapshot(ctxManager, runtimeSession.UsageSnapshot())
@@ -346,6 +365,7 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 		questionUI:              questionUI,
 		permissionSettingsIssue: permSettingsIssue,
 		session:                 runtimeSession,
+		memoryConfig:            memoryCfg,
 		replayBacklog:           replayBacklog,
 		replayTimeline:          replayTimeline,
 		deferHistoryReplay:      cfg.Resume && !cfg.Replay && startupSessionPicker == nil,
@@ -460,7 +480,7 @@ func (a *Application) refreshEngineSessionBindings() {
 		a.ctxManager.SetTrajectoryPath(trajectoryPath)
 	}
 	a.Engine.SetLLMDebugDumper(a.llmDebugDumper)
-	a.Engine.SetTrajectoryRecorder(newTrajectoryRecorder(a.session, a.ctxManager, a.WorkDir, a.noteLiveLLMActivity))
+	a.Engine.SetTrajectoryRecorder(newTrajectoryRecorder(a.session, a.ctxManager, a.WorkDir, a.memoryConfig, a.noteLiveLLMActivity))
 }
 
 func (a *Application) dumpPreCompactSnapshot(snapshot agentctx.CompactSnapshot) error {
@@ -515,7 +535,10 @@ func (a *Application) rotateSession() error {
 		return nil
 	}
 
-	systemPrompt := a.currentSystemPrompt()
+	systemPrompt, err := a.rebuildSystemPrompt()
+	if err != nil {
+		return fmt.Errorf("build system prompt: %w", err)
+	}
 	nextSession, err := session.Create(a.WorkDir, systemPrompt)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
@@ -528,6 +551,9 @@ func (a *Application) rotateSession() error {
 	a.session = nextSession
 	a.sessionLLMActivity.Store(false)
 	a.sessionStoreReady.Store(false)
+	if a.ctxManager != nil {
+		a.ctxManager.SetSystemPrompt(systemPrompt)
+	}
 
 	if permSvc, ok := a.permService.(*permission.DefaultPermissionService); ok {
 		permSvc.ResetSessionState()
@@ -621,7 +647,7 @@ func initProvider(cfg configs.ModelConfig, opts llm.ResolveOptions) (llm.Provide
 	return client, nil
 }
 
-func newTrajectoryRecorder(s *session.Session, cm *agentctx.Manager, workDir string, noteLiveLLMActivity func() error) *loop.TrajectoryRecorder {
+func newTrajectoryRecorder(s *session.Session, cm *agentctx.Manager, workDir string, memoryCfg autoMemoryConfig, noteLiveLLMActivity func() error) *loop.TrajectoryRecorder {
 	ensureSessionActive := func() error {
 		if noteLiveLLMActivity == nil {
 			return nil
@@ -698,9 +724,12 @@ func newTrajectoryRecorder(s *session.Session, cm *agentctx.Manager, workDir str
 			if strings.TrimSpace(path) == "" {
 				return nil
 			}
-			fullPath, err := fs.ResolveSafePath(workDir, path)
+			fullPath, err := fs.ResolveSafePathWithOptions(workDir, path, fsPathOptionsForMemory(memoryCfg))
 			if err != nil {
 				return err
+			}
+			if memoryCfg.Enabled && pathWithinAppRoot(memoryCfg.Dir, fullPath) {
+				return nil
 			}
 			return s.RecordFileMutation(path, fullPath)
 		},
@@ -816,14 +845,15 @@ func (a *Application) emitModelSetupPopup(canEscape bool) {
 	}
 }
 
-func initTools(cfg *configs.Config, workDir string) *tools.Registry {
+func initTools(cfg *configs.Config, workDir string, memoryCfg autoMemoryConfig) *tools.Registry {
 	registry := tools.NewRegistry()
 
-	registry.MustRegister(fs.NewReadTool(workDir))
-	registry.MustRegister(fs.NewWriteTool(workDir))
-	registry.MustRegister(fs.NewEditTool(workDir))
-	registry.MustRegister(fs.NewGrepTool(workDir))
-	registry.MustRegister(fs.NewGlobTool(workDir))
+	pathOptions := fsPathOptionsForMemory(memoryCfg)
+	registry.MustRegister(fs.NewReadToolWithOptions(workDir, pathOptions))
+	registry.MustRegister(fs.NewWriteToolWithOptions(workDir, pathOptions))
+	registry.MustRegister(fs.NewEditToolWithOptions(workDir, pathOptions))
+	registry.MustRegister(fs.NewGrepToolWithOptions(workDir, pathOptions))
+	registry.MustRegister(fs.NewGlobToolWithOptions(workDir, pathOptions))
 
 	shellRunner := rshell.NewRunner(rshell.Config{
 		WorkDir:        workDir,
@@ -840,4 +870,32 @@ func initTools(cfg *configs.Config, workDir string) *tools.Registry {
 	registry.MustRegister(shell.NewShellTool(shellRunner, workDir))
 
 	return registry
+}
+
+func fsPathOptionsForMemory(memoryCfg autoMemoryConfig) fs.PathOptions {
+	if !memoryCfg.Enabled || strings.TrimSpace(memoryCfg.Dir) == "" {
+		return fs.PathOptions{}
+	}
+	return fs.PathOptions{AllowedAbsoluteRoots: []string{memoryCfg.Dir}}
+}
+
+func pathWithinAppRoot(root, target string) bool {
+	root = strings.TrimSpace(root)
+	target = strings.TrimSpace(target)
+	if root == "" || target == "" {
+		return false
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	targetAbs, err := filepath.Abs(target)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(filepath.Clean(rootAbs), filepath.Clean(targetAbs))
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
 }

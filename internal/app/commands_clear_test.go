@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -117,8 +118,11 @@ func TestCmdClearRotatesSessionAndLeavesPreviousSnapshotUntouched(t *testing.T) 
 	})
 
 	systemPrompt, restoredMessages = reloadedCurrent.RestoreContext()
-	if got, want := systemPrompt, "system prompt"; got != want {
-		t.Fatalf("new session system prompt = %q, want %q", got, want)
+	if systemPrompt == "system prompt" {
+		t.Fatalf("new session system prompt was not rebuilt")
+	}
+	if !strings.Contains(systemPrompt, "You are MindSpore CLI") || !strings.Contains(systemPrompt, "## Persistent Memory") {
+		t.Fatalf("new session system prompt missing rebuilt sections: %q", systemPrompt)
 	}
 	if got := len(restoredMessages); got != 0 {
 		t.Fatalf("new session restored messages after clear = %d, want 0", got)
