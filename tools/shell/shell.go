@@ -87,12 +87,16 @@ func (t *ShellTool) Execute(ctx context.Context, params json.RawMessage) (*tools
 func (t *ShellTool) ExecuteStream(ctx context.Context, params json.RawMessage, emit func(tools.StreamEvent)) (*tools.Result, error) {
 	var p shellParams
 	if err := tools.ParseParams(params, &p); err != nil {
-		return tools.ErrorResult(err), nil
+		result := tools.ErrorResult(err)
+		tools.SetResultSource(result, tools.SourceShell)
+		return result, nil
 	}
 
 	command := strings.TrimSpace(p.Command)
 	if command == "" {
-		return tools.ErrorResultf("command is required"), nil
+		result := tools.ErrorResultf("command is required")
+		tools.SetResultSource(result, tools.SourceShell)
+		return result, nil
 	}
 
 	if p.Timeout > 0 {
@@ -120,9 +124,13 @@ func (t *ShellTool) ExecuteStream(ctx context.Context, params json.RawMessage, e
 	})
 	if err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
-			return tools.StringResultWithSummary("", "interrupted"), nil
+			result := tools.StringResultWithSummary("", "interrupted")
+			tools.SetResultSource(result, tools.SourceShell)
+			return result, nil
 		}
-		return tools.ErrorResultf("execute command: %w", err), nil
+		result := tools.ErrorResultf("execute command: %w", err)
+		tools.SetResultSource(result, tools.SourceShell)
+		return result, nil
 	}
 
 	output, hasOutput := shellOutput(result)
@@ -130,7 +138,9 @@ func (t *ShellTool) ExecuteStream(ctx context.Context, params json.RawMessage, e
 		if !hasOutput {
 			output = ""
 		}
-		return tools.StringResultWithSummary(output, "interrupted"), nil
+		out := tools.StringResultWithSummary(output, "interrupted")
+		addShellResultMeta(out, result)
+		return out, nil
 	}
 	if !hasOutput {
 		output = "(No output)"
@@ -154,7 +164,21 @@ func (t *ShellTool) ExecuteStream(ctx context.Context, params json.RawMessage, e
 		summary += " (output truncated, full result saved to disk)"
 	}
 
-	return tools.StringResultWithSummary(output, summary), nil
+	out := tools.StringResultWithSummary(output, summary)
+	addShellResultMeta(out, result)
+	if truncated {
+		tools.SetResultTruncated(out, true)
+	}
+	return out, nil
+}
+
+func addShellResultMeta(out *tools.Result, result *rshell.Result) {
+	tools.SetResultSource(out, tools.SourceShell)
+	if result == nil {
+		return
+	}
+	tools.SetResultExitCode(out, result.ExitCode)
+	tools.SetResultTruncated(out, result.StdoutTruncated || result.StderrTruncated)
 }
 
 func shellOutput(result *rshell.Result) (string, bool) {

@@ -97,7 +97,7 @@ type Match struct {
 func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (*tools.Result, error) {
 	var p grepParams
 	if err := tools.ParseParams(params, &p); err != nil {
-		return tools.ErrorResult(err), nil
+		return withSourceMeta(tools.ErrorResult(err)), nil
 	}
 
 	// Default case sensitive
@@ -112,7 +112,7 @@ func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 	}
 	fullPath, err := resolveSafePath(t.workDir, searchPath)
 	if err != nil {
-		return tools.ErrorResult(err), nil
+		return withSourceMeta(tools.ErrorResult(err)), nil
 	}
 
 	// Compile regex
@@ -122,18 +122,18 @@ func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 	}
 	re, err := regexp.Compile(pattern)
 	if err != nil {
-		return tools.ErrorResultf("invalid pattern: %w", err), nil
+		return withSourceMeta(tools.ErrorResultf("invalid pattern: %w", err)), nil
 	}
 
 	// Find files and search
 	matches, err := t.grep(ctx, fullPath, p.Include, re)
 	if err != nil {
-		return tools.ErrorResult(err), nil
+		return withSourceMeta(tools.ErrorResult(err)), nil
 	}
 
 	// Format results
 	if len(matches) == 0 {
-		return tools.StringResultWithSummary("No matches found", "0 matches"), nil
+		return withSourceMeta(tools.StringResultWithSummary("No matches found", "0 matches")), nil
 	}
 	effectiveLimit := normalizeSearchResultLimit(p.Limit)
 	totalMatches := len(matches)
@@ -148,7 +148,7 @@ func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 	summary := pagedSearchSummary(totalMatches, p.Offset, len(matches), "matches")
 	result := buildSearchResultContent(summary, lines)
 
-	return tools.StringResultWithSummary(result, summary), nil
+	return withSourceMeta(tools.StringResultWithSummary(result, summary)), nil
 }
 
 func (t *GrepTool) grep(ctx context.Context, root, include string, re *regexp.Regexp) ([]Match, error) {

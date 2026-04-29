@@ -83,6 +83,7 @@ type stubTool struct {
 	name    string
 	content string
 	summary string
+	meta    map[string]any
 }
 
 func (t stubTool) Name() string {
@@ -98,7 +99,7 @@ func (t stubTool) Schema() llm.ToolSchema {
 }
 
 func (t stubTool) Execute(context.Context, json.RawMessage) (*tools.Result, error) {
-	return &tools.Result{Content: t.content, Summary: t.summary}, nil
+	return &tools.Result{Content: t.content, Summary: t.summary, Meta: t.meta}, nil
 }
 
 type streamingStubTool struct {
@@ -276,6 +277,68 @@ func TestRunPersistsToolResultBeforeToolRender(t *testing.T) {
 
 	requireOrder(t, log, "tool_call:read", "snapshot:tool_call:read", "ui:ToolCallStart")
 	requireOrder(t, log, "tool_result:read", "snapshot:tool_result:read", "ui:ToolRead")
+}
+
+func TestRunAddsStandardMetadataToReturnedToolResult(t *testing.T) {
+	args, err := json.Marshal(map[string]string{"path": "sample.txt"})
+	if err != nil {
+		t.Fatalf("marshal tool args: %v", err)
+	}
+
+	provider := &scriptedStreamProvider{
+		responses: []*llm.CompletionResponse{
+			{
+				ToolCalls: []llm.ToolCall{{
+					ID:   "call-edit-1",
+					Type: "function",
+					Function: llm.ToolCallFunc{
+						Name:      "edit",
+						Arguments: args,
+					},
+				}},
+				FinishReason: llm.FinishToolCalls,
+			},
+			{Content: "done", FinishReason: llm.FinishStop},
+		},
+	}
+
+	registry := tools.NewRegistry()
+	registry.MustRegister(stubTool{
+		name:    "edit",
+		content: "edited",
+		summary: "1 line",
+		meta: map[string]any{
+			"edit_diff": map[string]any{"path": "sample.txt"},
+		},
+	})
+
+	engine := NewEngine(EngineConfig{MaxIterations: 2, ContextWindow: 4096}, provider, registry)
+
+	var editEvent *Event
+	err = engine.RunWithContextStream(context.Background(), Task{
+		ID:          "tool-result-meta",
+		Description: "edit file",
+	}, func(ev Event) {
+		if ev.Type == EventToolEdit {
+			copy := ev
+			editEvent = &copy
+		}
+	})
+	if err != nil {
+		t.Fatalf("RunWithContextStream failed: %v", err)
+	}
+	if editEvent == nil {
+		t.Fatal("missing ToolEdit event")
+	}
+	if got := editEvent.Meta[tools.MetaStatus]; got != tools.StatusCompleted {
+		t.Fatalf("status meta = %#v, want completed (meta %#v)", got, editEvent.Meta)
+	}
+	if _, ok := editEvent.Meta[tools.MetaDurationMS].(int64); !ok {
+		t.Fatalf("duration meta = %#v, want int64", editEvent.Meta[tools.MetaDurationMS])
+	}
+	if editEvent.Meta["edit_diff"] == nil {
+		t.Fatalf("edit_diff metadata was not preserved: %#v", editEvent.Meta)
+	}
 }
 
 func TestRunShellStreamingEmitsLiveCommandEvents(t *testing.T) {

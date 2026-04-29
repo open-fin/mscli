@@ -81,31 +81,31 @@ type readParams struct {
 func (t *ReadTool) Execute(ctx context.Context, params json.RawMessage) (*tools.Result, error) {
 	var p readParams
 	if err := tools.ParseParams(params, &p); err != nil {
-		return tools.ErrorResult(err), nil
+		return withSourceMeta(tools.ErrorResult(err)), nil
 	}
 
 	fullPath, err := resolveSafePath(t.workDir, p.Path)
 	if err != nil {
-		return tools.ErrorResult(err), nil
+		return withSourceMeta(tools.ErrorResult(err)), nil
 	}
 
 	// Check if file exists
 	info, err := os.Stat(fullPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return tools.ErrorResultf("file not found: %s", p.Path), nil
+			return withSourceMeta(tools.ErrorResultf("file not found: %s", p.Path)), nil
 		}
-		return tools.ErrorResultf("stat file: %w", err), nil
+		return withSourceMeta(tools.ErrorResultf("stat file: %w", err)), nil
 	}
 
 	if info.IsDir() {
-		return tools.ErrorResultf("path is a directory: %s", p.Path), nil
+		return withSourceMeta(tools.ErrorResultf("path is a directory: %s", p.Path)), nil
 	}
 
 	// Read file
 	content, err := t.readFile(fullPath, p.Offset, p.Limit)
 	if err != nil {
-		return tools.ErrorResult(err), nil
+		return withSourceMeta(tools.ErrorResult(err)), nil
 	}
 
 	// Count lines for summary
@@ -129,7 +129,11 @@ func (t *ReadTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 		summary += " (truncated, full file saved to disk)"
 	}
 
-	return tools.StringResultWithSummary(content, summary), nil
+	result := withSourceMeta(tools.StringResultWithSummary(content, summary))
+	if truncated {
+		tools.SetResultTruncated(result, true)
+	}
+	return result, nil
 }
 
 func (t *ReadTool) readFile(path string, offset, limit int) (string, error) {

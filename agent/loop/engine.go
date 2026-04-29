@@ -539,6 +539,7 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 	// Execute
 	var result *tools.Result
 	streamingTool, canStream := tool.(tools.StreamingTool)
+	toolStart := time.Now()
 	if canStream {
 		result, err = streamingTool.ExecuteStream(ctx, tc.Function.Arguments, func(update tools.StreamEvent) {
 			ex.addStreamingToolEvent(toolName, tc.ID, update)
@@ -546,6 +547,7 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 	} else {
 		result, err = tool.Execute(ctx, tc.Function.Arguments)
 	}
+	ex.addReturnedResultMeta(result, time.Since(toolStart))
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
 			if interruptErr := ex.handleInterruptedToolCall(tc, ""); interruptErr != nil {
@@ -554,6 +556,22 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 			return context.Canceled
 		}
 		errMsg := fmt.Sprintf("Tool execution error: %v", err)
+		notice, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg)
+		if err != nil {
+			return err
+		}
+		if err := ex.persistSnapshot(); err != nil {
+			return err
+		}
+		if err := ex.emitContextCompactionNotice(notice); err != nil {
+			return err
+		}
+		ex.addEvent(NewEvent(EventToolError, errMsg))
+		return nil
+	}
+
+	if result == nil {
+		errMsg := fmt.Sprintf("Tool %s returned no result", toolName)
 		notice, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg)
 		if err != nil {
 			return err
@@ -617,6 +635,25 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 	return nil
 }
 
+func (ex *executor) addReturnedResultMeta(result *tools.Result, duration time.Duration) {
+	if result == nil {
+		return
+	}
+	if result.Meta == nil {
+		result.Meta = make(map[string]any)
+	}
+	if _, ok := result.Meta[tools.MetaDurationMS]; !ok {
+		tools.SetResultDuration(result, duration.Milliseconds())
+	}
+	if _, ok := result.Meta[tools.MetaStatus]; !ok {
+		status := tools.StatusCompleted
+		if result.Error != nil {
+			status = tools.StatusFailed
+		}
+		tools.SetResultStatus(result, status)
+	}
+}
+
 func (ex *executor) handleInterruptedToolCall(tc llm.ToolCall, partialOutput string) error {
 	content := interruptedToolResultContent(partialOutput)
 	notice, err := ex.addToolResultWithFallback(context.Background(), tc.ID, content)
@@ -656,13 +693,13 @@ func interruptedToolResultContent(partialOutput string) string {
 }
 
 var toolEventMap = map[string]string{
-	"read":       EventToolRead,
-	"grep":       EventToolGrep,
-	"glob":       EventToolGlob,
-	"edit":       EventToolEdit,
-	"write":      EventToolWrite,
-	"shell":      EventCmdFinished,
-	"load_skill": EventToolSkill,
+	"read":            EventToolRead,
+	"grep":            EventToolGrep,
+	"glob":            EventToolGlob,
+	"edit":            EventToolEdit,
+	"write":           EventToolWrite,
+	"shell":           EventCmdFinished,
+	"load_skill":      EventToolSkill,
 	"AskUserQuestion": EventToolAskUserQuestion,
 }
 

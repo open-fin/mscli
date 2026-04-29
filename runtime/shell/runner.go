@@ -26,10 +26,12 @@ type Config struct {
 
 // Result is the result of a command execution.
 type Result struct {
-	Stdout   string
-	Stderr   string
-	ExitCode int
-	Error    error
+	Stdout          string
+	Stderr          string
+	ExitCode        int
+	Error           error
+	StdoutTruncated bool
+	StderrTruncated bool
 }
 
 // OutputChunk is a single line emitted while a command is running.
@@ -116,11 +118,12 @@ func (r *Runner) RunStream(ctx context.Context, command string, emit func(Output
 	}()
 
 	var stdoutOut, stderrOut string
+	var stdoutTruncated, stderrTruncated bool
 	var stdoutErr, stderrErr error
 
 	stdoutDone := make(chan struct{})
 	go func() {
-		stdoutOut, stdoutErr = readCapped(stdout, maxOutputBytes, func(line string) {
+		stdoutOut, stdoutTruncated, stdoutErr = readCapped(stdout, maxOutputBytes, func(line string) {
 			if emit != nil {
 				emit(OutputChunk{Stream: StreamStdout, Text: line})
 			}
@@ -130,7 +133,7 @@ func (r *Runner) RunStream(ctx context.Context, command string, emit func(Output
 
 	stderrDone := make(chan struct{})
 	go func() {
-		stderrOut, stderrErr = readCapped(stderr, maxOutputBytes, func(line string) {
+		stderrOut, stderrTruncated, stderrErr = readCapped(stderr, maxOutputBytes, func(line string) {
 			if emit != nil {
 				emit(OutputChunk{Stream: StreamStderr, Text: line})
 			}
@@ -151,9 +154,11 @@ func (r *Runner) RunStream(ctx context.Context, command string, emit func(Output
 	close(cmdDone)
 
 	result := &Result{
-		Stdout:   stdoutOut,
-		Stderr:   stderrOut,
-		ExitCode: 0,
+		Stdout:          stdoutOut,
+		Stderr:          stderrOut,
+		ExitCode:        0,
+		StdoutTruncated: stdoutTruncated,
+		StderrTruncated: stderrTruncated,
 	}
 
 	if err != nil {
@@ -168,7 +173,7 @@ func (r *Runner) RunStream(ctx context.Context, command string, emit func(Output
 	return result, nil
 }
 
-func readCapped(r io.Reader, maxBytes int, emit func(string)) (string, error) {
+func readCapped(r io.Reader, maxBytes int, emit func(string)) (string, bool, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 64*1024), maxScannerTokenSize)
 
@@ -184,15 +189,15 @@ func readCapped(r io.Reader, maxBytes int, emit func(string)) (string, error) {
 		truncated = truncated || nextTruncated
 	}
 	if err := scanner.Err(); err != nil {
-		return "", err
+		return "", false, err
 	}
 	if truncated {
 		if strings.TrimSpace(content) == "" {
-			return outputTruncatedMark, nil
+			return outputTruncatedMark, true, nil
 		}
-		return outputTruncatedMark + "\n" + content, nil
+		return outputTruncatedMark + "\n" + content, true, nil
 	}
-	return content, nil
+	return content, false, nil
 }
 
 func appendOutputWindow(content, chunk string, maxBytes int) (string, bool) {

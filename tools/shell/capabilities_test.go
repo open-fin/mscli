@@ -3,8 +3,8 @@ package shell
 import (
 	"testing"
 
-	rshell "github.com/mindspore-lab/mindspore-cli/runtime/shell"
-	"github.com/mindspore-lab/mindspore-cli/tools"
+	rshell "gitcode.com/mindspore/mscli/runtime/shell"
+	"gitcode.com/mindspore/mscli/tools"
 )
 
 func TestShellToolCapabilities(t *testing.T) {

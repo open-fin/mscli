@@ -59,14 +59,22 @@ type loadSkillParams struct {
 func (t *LoadSkillTool) Execute(_ context.Context, params json.RawMessage) (*tools.Result, error) {
 	var p loadSkillParams
 	if err := tools.ParseParams(params, &p); err != nil {
-		return tools.ErrorResult(err), nil
+		result := tools.ErrorResult(err)
+		tools.SetResultSource(result, tools.SourceSkill)
+		return result, nil
 	}
 	if p.Name == "" {
-		return tools.ErrorResultf("skill name is required"), nil
+		result := tools.ErrorResultf("skill name is required")
+		tools.SetResultSource(result, tools.SourceSkill)
+		return result, nil
 	}
 	content, err := t.loader.Load(p.Name)
 	if err != nil {
-		return tools.ErrorResultf("load skill: %v", err), nil
+		result := tools.ErrorResultf("load skill: %v", err)
+		tools.SetResultSource(result, tools.SourceSkill)
+		return result, nil
 	}
-	return tools.StringResultWithSummary(content, fmt.Sprintf("loaded skill: %s", p.Name)), nil
+	result := tools.StringResultWithSummary(content, fmt.Sprintf("loaded skill: %s", p.Name))
+	tools.SetResultSource(result, tools.SourceSkill)
+	return result, nil
 }

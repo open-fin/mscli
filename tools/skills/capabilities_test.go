@@ -3,8 +3,8 @@ package skills
 import (
 	"testing"
 
-	skillslib "github.com/mindspore-lab/mindspore-cli/integrations/skills"
-	"github.com/mindspore-lab/mindspore-cli/tools"
+	skillslib "gitcode.com/mindspore/mscli/integrations/skills"
+	"gitcode.com/mindspore/mscli/tools"
 )
 
 func TestLoadSkillCapabilities(t *testing.T) {

@@ -37,6 +37,15 @@ func TestShellToolExecute_DoesNotDuplicateCommandOrExit0InContent(t *testing.T) 
 	if strings.TrimSpace(result.Summary) == "exit 0" {
 		t.Fatalf("expected summary not to be 'exit 0'")
 	}
+	if got := result.Meta[tools.MetaSource]; got != tools.SourceShell {
+		t.Fatalf("source meta = %#v, want %q", got, tools.SourceShell)
+	}
+	if got := result.Meta[tools.MetaExitCode]; got != 0 {
+		t.Fatalf("exit code meta = %#v, want 0", got)
+	}
+	if got := result.Meta[tools.MetaTruncated]; got != false {
+		t.Fatalf("truncated meta = %#v, want false", got)
+	}
 }
 
 func TestShellToolExecuteStream_EmitsStartedAndOutput(t *testing.T) {

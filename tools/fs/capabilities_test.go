@@ -3,7 +3,7 @@ package fs
 import (
 	"testing"
 
-	"github.com/mindspore-lab/mindspore-cli/tools"
+	"gitcode.com/mindspore/mscli/tools"
 )
 
 func TestFilesystemToolCapabilities(t *testing.T) {

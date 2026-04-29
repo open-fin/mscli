@@ -81,23 +81,51 @@ func (t *Tool) Schema() llm.ToolSchema {
 
 func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (*tools.Result, error) {
 	if t.caller == nil {
-		return tools.ErrorResultf("mcp tool %s has no caller", t.Name()), nil
+		return t.withMeta(tools.ErrorResultf("mcp tool %s has no caller", t.Name()), tools.StatusFailed, tools.ContentTypeText), nil
 	}
 	result, err := t.caller.CallTool(ctx, t.def.ServerName, t.def.OriginalToolName, raw)
 	if err != nil {
-		return tools.ErrorResult(err), nil
+		return t.withMeta(tools.ErrorResult(err), tools.StatusFailed, tools.ContentTypeText), nil
 	}
 	if result == nil {
-		return tools.ErrorResultf("mcp tool %s returned no result", t.Name()), nil
+		return t.withMeta(tools.ErrorResultf("mcp tool %s returned no result", t.Name()), tools.StatusFailed, tools.ContentTypeText), nil
 	}
 	content := formatCallResult(result)
 	if result.IsError {
-		return tools.ErrorResultf("mcp tool %s/%s failed: %s", t.def.ServerName, t.def.OriginalToolName, content), nil
+		return t.withMeta(tools.ErrorResultf("mcp tool %s/%s failed: %s", t.def.ServerName, t.def.OriginalToolName, content), tools.StatusFailed, tools.ContentTypeText), nil
 	}
+	contentType := mcpContentType(result, false)
 	if len(content) > maxResultContent {
 		content = persistLargeResultNotice(content, t.def.ServerName, t.def.OriginalToolName, result)
+		contentType = mcpContentType(result, true)
 	}
-	return tools.StringResultWithSummary(content, fmt.Sprintf("mcp %s/%s", t.def.ServerName, t.def.OriginalToolName)), nil
+	return t.withMeta(tools.StringResultWithSummary(content, fmt.Sprintf("mcp %s/%s", t.def.ServerName, t.def.OriginalToolName)), tools.StatusCompleted, contentType), nil
+}
+
+func (t *Tool) withMeta(result *tools.Result, status, contentType string) *tools.Result {
+	tools.SetResultSource(result, tools.SourceMCP)
+	tools.SetResultServer(result, t.def.ServerName)
+	tools.SetResultTool(result, t.def.OriginalToolName)
+	tools.SetResultStatus(result, status)
+	tools.SetResultContentType(result, contentType)
+	return result
+}
+
+func mcpContentType(result *runtimemcp.CallResult, artifact bool) string {
+	if artifact {
+		return ContentTypeForMCPArtifact(result)
+	}
+	if result != nil && result.StructuredContent != nil && len(result.Content) == 0 {
+		return tools.ContentTypeJSON
+	}
+	return tools.ContentTypeText
+}
+
+func ContentTypeForMCPArtifact(result *runtimemcp.CallResult) string {
+	if result != nil && result.StructuredContent != nil && len(result.Content) == 0 {
+		return tools.ContentTypeJSON
+	}
+	return tools.ContentTypeText
 }
 
 func formatCallResult(result *runtimemcp.CallResult) string {

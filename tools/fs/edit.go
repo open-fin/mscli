@@ -72,21 +72,21 @@ type editParams struct {
 func (t *EditTool) Execute(ctx context.Context, params json.RawMessage) (*tools.Result, error) {
 	var p editParams
 	if err := tools.ParseParams(params, &p); err != nil {
-		return tools.ErrorResult(err), nil
+		return withSourceMeta(tools.ErrorResult(err)), nil
 	}
 
 	fullPath, err := resolveSafePath(t.workDir, p.Path)
 	if err != nil {
-		return tools.ErrorResult(err), nil
+		return withSourceMeta(tools.ErrorResult(err)), nil
 	}
 
 	// Read existing file
 	content, err := os.ReadFile(fullPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return tools.ErrorResultf("file not found: %s", p.Path), nil
+			return withSourceMeta(tools.ErrorResultf("file not found: %s", p.Path)), nil
 		}
-		return tools.ErrorResultf("read file: %w", err), nil
+		return withSourceMeta(tools.ErrorResultf("read file: %w", err)), nil
 	}
 
 	contentStr := string(content)
@@ -94,13 +94,13 @@ func (t *EditTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 	// Check if old_string exists
 	if !strings.Contains(contentStr, p.OldString) {
 		// Try to find similar content
-		return tools.ErrorResultf("old_string not found in file. The text must match exactly (including whitespace and newlines)"), nil
+		return withSourceMeta(tools.ErrorResultf("old_string not found in file. The text must match exactly (including whitespace and newlines)")), nil
 	}
 
 	// Count occurrences
 	occurrences := strings.Count(contentStr, p.OldString)
 	if occurrences > 1 {
-		return tools.ErrorResultf("old_string appears %d times in the file. Please provide more context to make a unique match", occurrences), nil
+		return withSourceMeta(tools.ErrorResultf("old_string appears %d times in the file. Please provide more context to make a unique match", occurrences)), nil
 	}
 
 	// Replace
@@ -109,7 +109,7 @@ func (t *EditTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 
 	// Write back
 	if err := os.WriteFile(fullPath, []byte(newContent), 0644); err != nil {
-		return tools.ErrorResultf("write file: %w", err), nil
+		return withSourceMeta(tools.ErrorResultf("write file: %w", err)), nil
 	}
 
 	// Build diff-style result
@@ -127,7 +127,7 @@ func (t *EditTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 
 	out := tools.StringResultWithSummary(result, summary)
 	out.Meta = buildEditDiffMeta(p.Path, contentStr, newContent, p.OldString, p.NewString, oldPos)
-	return out, nil
+	return withSourceMeta(out), nil
 }
 
 func buildEditDiffMeta(path, before, after, oldString, newString string, oldPos int) map[string]any {

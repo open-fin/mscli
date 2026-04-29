@@ -3,8 +3,8 @@ package mcp
 import (
 	"testing"
 
-	runtimemcp "github.com/mindspore-lab/mindspore-cli/runtime/mcp"
-	"github.com/mindspore-lab/mindspore-cli/tools"
+	runtimemcp "gitcode.com/mindspore/mscli/runtime/mcp"
+	"gitcode.com/mindspore/mscli/tools"
 )
 
 func TestMCPToolCapabilities(t *testing.T) {

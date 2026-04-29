@@ -3,12 +3,14 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	runtimemcp "gitcode.com/mindspore/mscli/runtime/mcp"
+	"gitcode.com/mindspore/mscli/tools"
 )
 
 func TestToolUsesQualifiedNameAndOriginalCallTarget(t *testing.T) {
@@ -82,6 +84,75 @@ func TestToolReturnsErrorResultForMCPError(t *testing.T) {
 	}
 }
 
+func TestToolSetsStandardMetadataForMCPResultPaths(t *testing.T) {
+	tests := []struct {
+		name        string
+		caller      Caller
+		wantStatus  string
+		wantContent string
+	}{
+		{
+			name:        "missing caller",
+			caller:      nil,
+			wantStatus:  tools.StatusFailed,
+			wantContent: tools.ContentTypeText,
+		},
+		{
+			name:        "call error",
+			caller:      &fakeCaller{err: errors.New("boom")},
+			wantStatus:  tools.StatusFailed,
+			wantContent: tools.ContentTypeText,
+		},
+		{
+			name:        "nil result",
+			caller:      &fakeCaller{},
+			wantStatus:  tools.StatusFailed,
+			wantContent: tools.ContentTypeText,
+		},
+		{
+			name: "call result error",
+			caller: &fakeCaller{result: &runtimemcp.CallResult{
+				IsError: true,
+				Content: []runtimemcp.ContentBlock{{Type: "text", Text: "failed"}},
+			}},
+			wantStatus:  tools.StatusFailed,
+			wantContent: tools.ContentTypeText,
+		},
+		{
+			name: "structured success",
+			caller: &fakeCaller{result: &runtimemcp.CallResult{
+				StructuredContent: map[string]any{"ok": true},
+			}},
+			wantStatus:  tools.StatusCompleted,
+			wantContent: tools.ContentTypeJSON,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tool := NewTool(runtimemcp.ToolDefinition{
+				ServerName:       "server",
+				OriginalToolName: "tool",
+			}, tt.caller)
+			result, err := tool.Execute(context.Background(), nil)
+			if err != nil {
+				t.Fatalf("Execute() err = %v", err)
+			}
+			for key, want := range map[string]any{
+				tools.MetaSource:      tools.SourceMCP,
+				tools.MetaServer:      "server",
+				tools.MetaTool:        "tool",
+				tools.MetaStatus:      tt.wantStatus,
+				tools.MetaContentType: tt.wantContent,
+			} {
+				if got := result.Meta[key]; got != want {
+					t.Fatalf("Meta[%s] = %#v, want %#v (meta %#v)", key, got, want, result.Meta)
+				}
+			}
+		})
+	}
+}
+
 func TestToolPersistsLargeResults(t *testing.T) {
 	home := t.TempDir()
 	workDir := t.TempDir()
@@ -116,6 +187,9 @@ func TestToolPersistsLargeResults(t *testing.T) {
 	}
 	if string(data) != large {
 		t.Fatalf("persisted content len=%d, want %d", len(data), len(large))
+	}
+	if got := result.Meta[tools.MetaContentType]; got != tools.ContentTypeText {
+		t.Fatalf("content type = %#v, want text/plain", got)
 	}
 }
 

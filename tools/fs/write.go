@@ -70,7 +70,7 @@ type writeParams struct {
 func (t *WriteTool) Execute(ctx context.Context, params json.RawMessage) (*tools.Result, error) {
 	var p writeParams
 	if err := tools.ParseParams(params, &p); err != nil {
-		return tools.ErrorResult(err), nil
+		return withSourceMeta(tools.ErrorResult(err)), nil
 	}
 
 	path := strings.TrimSpace(p.Path)
@@ -81,18 +81,18 @@ func (t *WriteTool) Execute(ctx context.Context, params json.RawMessage) (*tools
 		path = strings.TrimSpace(p.Filename)
 	}
 	if path == "" {
-		return tools.ErrorResultf(`invalid_write_args: missing path (required keys: "path","content"; aliases "file_path"/"filename" are fallback only)`), nil
+		return withSourceMeta(tools.ErrorResultf(`invalid_write_args: missing path (required keys: "path","content"; aliases "file_path"/"filename" are fallback only)`)), nil
 	}
 
 	fullPath, err := resolveSafePath(t.workDir, path)
 	if err != nil {
-		return tools.ErrorResult(err), nil
+		return withSourceMeta(tools.ErrorResult(err)), nil
 	}
 
 	// Ensure parent directory exists
 	dir := filepath.Dir(fullPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return tools.ErrorResultf("create directory: %w", err), nil
+		return withSourceMeta(tools.ErrorResultf("create directory: %w", err)), nil
 	}
 
 	// Check if file already exists
@@ -103,7 +103,7 @@ func (t *WriteTool) Execute(ctx context.Context, params json.RawMessage) (*tools
 
 	// Write file
 	if err := os.WriteFile(fullPath, []byte(p.Content), 0644); err != nil {
-		return tools.ErrorResultf("write file: %w", err), nil
+		return withSourceMeta(tools.ErrorResultf("write file: %w", err)), nil
 	}
 
 	// Build result
@@ -120,5 +120,5 @@ func (t *WriteTool) Execute(ctx context.Context, params json.RawMessage) (*tools
 	content := fmt.Sprintf("%s: %s\n+ %s", action, path, p.Content)
 	summary := fmt.Sprintf("%s %d lines", action, lines)
 
-	return tools.StringResultWithSummary(content, summary), nil
+	return withSourceMeta(tools.StringResultWithSummary(content, summary)), nil
 }

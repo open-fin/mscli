@@ -79,7 +79,7 @@ type globParams struct {
 func (t *GlobTool) Execute(ctx context.Context, params json.RawMessage) (*tools.Result, error) {
 	var p globParams
 	if err := tools.ParseParams(params, &p); err != nil {
-		return tools.ErrorResult(err), nil
+		return withSourceMeta(tools.ErrorResult(err)), nil
 	}
 
 	// Resolve base path
@@ -89,21 +89,21 @@ func (t *GlobTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 	}
 	fullBasePath, err := resolveSafePath(t.workDir, basePath)
 	if err != nil {
-		return tools.ErrorResult(err), nil
+		return withSourceMeta(tools.ErrorResult(err)), nil
 	}
 
 	// Check if base path exists
 	info, err := os.Stat(fullBasePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return tools.ErrorResultf("path not found: %s", p.Path), nil
+			return withSourceMeta(tools.ErrorResultf("path not found: %s", p.Path)), nil
 		}
-		return tools.ErrorResult(err), nil
+		return withSourceMeta(tools.ErrorResult(err)), nil
 	}
 
 	pattern := filepath.ToSlash(strings.TrimSpace(p.Pattern))
 	if pattern == "" {
-		return tools.ErrorResultf("pattern is required"), nil
+		return withSourceMeta(tools.ErrorResultf("pattern is required")), nil
 	}
 	recursive := strings.Contains(pattern, "**") || strings.Contains(pattern, "/")
 
@@ -115,7 +115,7 @@ func (t *GlobTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 		matches, err = t.globSingle(fullBasePath, pattern)
 	}
 	if err != nil {
-		return tools.ErrorResult(err), nil
+		return withSourceMeta(tools.ErrorResult(err)), nil
 	}
 
 	// If base path is a file (not directory), check it directly
@@ -132,7 +132,7 @@ func (t *GlobTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 	sort.Strings(matches)
 
 	if len(matches) == 0 {
-		return tools.StringResultWithSummary("No files found", "0 files"), nil
+		return withSourceMeta(tools.StringResultWithSummary("No files found", "0 files")), nil
 	}
 	effectiveLimit := normalizeSearchResultLimit(p.Limit)
 	totalMatches := len(matches)
@@ -141,7 +141,7 @@ func (t *GlobTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 	summary := pagedSearchSummary(totalMatches, p.Offset, len(matches), "files")
 	result := buildSearchResultContent(summary, matches)
 
-	return tools.StringResultWithSummary(result, summary), nil
+	return withSourceMeta(tools.StringResultWithSummary(result, summary)), nil
 }
 
 func (t *GlobTool) globSingle(root, pattern string) ([]string, error) {
