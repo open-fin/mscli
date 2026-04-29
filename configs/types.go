@@ -14,7 +14,6 @@ type Config struct {
 	UI            UIConfig                     `yaml:"ui"`
 	Permissions   PermissionsConfig            `yaml:"permissions"`
 	Context       ContextConfig                `yaml:"context"`
-	Memory        MemoryConfig                 `yaml:"memory"`
 	Execution     ExecutionConfig              `yaml:"execution"`
 }
 
@@ -89,15 +88,6 @@ func DefaultReserveTokens(contextWindow int) int {
 	return reserve
 }
 
-// MemoryConfig holds the memory system configuration.
-type MemoryConfig struct {
-	Enabled   bool   `yaml:"enabled"`
-	StorePath string `yaml:"store_path,omitempty"`
-	MaxItems  int    `yaml:"max_items"`
-	MaxBytes  int64  `yaml:"max_bytes"`
-	TTLHours  int    `yaml:"ttl_hours"`
-}
-
 // ExecutionConfig holds the execution configuration.
 type ExecutionConfig struct {
 	Mode           string       `yaml:"mode"`
@@ -147,13 +137,6 @@ func DefaultConfig() *Config {
 			Window:              DefaultContextWindow,
 			ReserveTokens:       DefaultReserveTokens(DefaultContextWindow),
 			CompactionThreshold: 0,
-		},
-		Memory: MemoryConfig{
-			Enabled:   true,
-			StorePath: "",
-			MaxItems:  200,
-			MaxBytes:  2 * 1024 * 1024, // 2MB
-			TTLHours:  168,             // 7 days
 		},
 		ModelProfiles: make(map[string]ModelTokenProfile),
 		Request: RequestConfig{

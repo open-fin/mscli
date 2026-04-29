@@ -105,15 +105,6 @@ func ApplyEnvOverrides(cfg *Config) {
 		refreshContextReserveDefaults(cfg, previousContextWindow)
 	}
 
-	// Memory settings
-	if v := os.Getenv("MSCLI_MEMORY_ENABLED"); v != "" {
-		if b, err := strconv.ParseBool(v); err == nil {
-			cfg.Memory.Enabled = b
-		}
-	}
-	if v := os.Getenv("MSCLI_MEMORY_PATH"); v != "" {
-		cfg.Memory.StorePath = v
-	}
 }
 
 // StringSliceEnv splits an environment variable by comma.

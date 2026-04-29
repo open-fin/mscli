@@ -26,7 +26,6 @@ mindspore-cli/
   agent/
     context/               context window management and compaction
     loop/                  ReAct-style execution engine (the core runtime)
-    memory/                memory store, retrieval, and policy
     session/               session state and persistence
   workflow/
     train/                 train lane controller, setup, run, demo backend
@@ -64,6 +63,7 @@ runTask:
   -> compose effective conversation context:
        EngineConfig.SystemPrompt
        + skill summaries (from integrations/skills)
+       + file-backed auto-memory and MSCLI.md instructions (from internal/app)
        + any skill content preloaded by /skill
   -> agent/loop.Engine.RunWithContext(task)
   -> tools.Registry
@@ -99,7 +99,8 @@ Free text uses the base system prompt which includes skill summaries
 
 - **`internal/app/`**
   Loads config, wires dependencies, starts the TUI, handles slash commands,
-  dispatches tasks to the engine, and converts `loop.Event` to `ui/model.Event`.
+  dispatches tasks to the engine, converts `loop.Event` to `ui/model.Event`,
+  and owns file-backed auto-memory plus `MSCLI.md` prompt injection.
 
 - **`agent/loop/`**
   The core runtime. Runs the LLM/tool loop: tool calling, permission checks,
@@ -107,6 +108,9 @@ Free text uses the base system prompt which includes skill summaries
 
 - **`agent/session/`**
   Owns session state, trajectory persistence, and resume reconstruction.
+
+There is no `agent/memory` runtime package. Persistent memory is plain files
+under the app-selected memory directory and is accessed through `tools/fs`.
 
 - **`integrations/skills/`**
   Lists available skills, loads one skill fully on demand (`SKILL.md` + metadata).
