@@ -33,6 +33,7 @@ type CompletionRequest struct {
 	MaxTokens   *int
 	TopP        float32
 	Stop        []string
+	Effort      string
 }
 
 // CompletionResponse represents a completion response.

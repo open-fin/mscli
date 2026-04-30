@@ -37,6 +37,7 @@ func (c *openAIResponsesCodec) encodeRequest(req *CompletionRequest, stream bool
 		Input:              input,
 		Instructions:       instructions,
 		Tools:              encodedTools,
+		Reasoning:          openAIReasoningConfigForEffort(req.Effort),
 		Temperature:        req.Temperature,
 		MaxOutputTokens:    req.MaxTokens,
 		TopP:               req.TopP,
@@ -181,11 +182,24 @@ type openAIResponsesRequest struct {
 	Input              []openAIResponsesInputItem `json:"input,omitempty"`
 	Instructions       string                     `json:"instructions,omitempty"`
 	Tools              []openAIResponsesTool      `json:"tools,omitempty"`
+	Reasoning          *openAIReasoningConfig     `json:"reasoning,omitempty"`
 	Temperature        *float32                   `json:"temperature,omitempty"`
 	MaxOutputTokens    *int                       `json:"max_output_tokens,omitempty"`
 	TopP               float32                    `json:"top_p,omitempty"`
 	PreviousResponseID string                     `json:"previous_response_id,omitempty"`
 	Stream             bool                       `json:"stream,omitempty"`
+}
+
+type openAIReasoningConfig struct {
+	Effort string `json:"effort,omitempty"`
+}
+
+func openAIReasoningConfigForEffort(effort string) *openAIReasoningConfig {
+	effort = strings.ToLower(strings.TrimSpace(effort))
+	if effort == "" {
+		return nil
+	}
+	return &openAIReasoningConfig{Effort: effort}
 }
 
 type openAIResponsesInputItem struct {

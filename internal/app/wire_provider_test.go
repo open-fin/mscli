@@ -502,6 +502,45 @@ func TestWirePassesMSCLITemperatureToModelRequests(t *testing.T) {
 	}
 }
 
+func TestWirePassesMSCLIEffortToModelRequests(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MSCLI_PROVIDER", "openai-responses")
+	t.Setenv("MSCLI_API_KEY", "token")
+	t.Setenv("MSCLI_MODEL", "gpt-5")
+	t.Setenv("MSCLI_EFFORT", "minimal")
+
+	tempDir := t.TempDir()
+	t.Chdir(tempDir)
+
+	provider := &captureStreamProvider{}
+	origBuildProvider := buildProvider
+	buildProvider = func(resolved llm.ResolvedConfig) (llm.Provider, error) {
+		return provider, nil
+	}
+	defer func() { buildProvider = origBuildProvider }()
+
+	app, err := Wire(BootstrapConfig{})
+	if err != nil {
+		t.Fatalf("Wire() error = %v", err)
+	}
+
+	_, err = app.Engine.Run(loop.Task{
+		ID:          "wire-effort",
+		Description: "ping",
+	})
+	if err != nil {
+		t.Fatalf("Engine.Run() error = %v", err)
+	}
+
+	if provider.lastReq == nil {
+		t.Fatal("expected provider to receive completion request")
+	}
+	if got, want := provider.lastReq.Effort, "minimal"; got != want {
+		t.Fatalf("provider.lastReq.Effort = %q, want %q", got, want)
+	}
+}
+
 func TestWireAndSetProviderRespectMSCLIMaxIterations(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

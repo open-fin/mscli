@@ -22,6 +22,7 @@ type EngineConfig struct {
 	ContextWindow  int
 	MaxTokens      *int
 	Temperature    *float32
+	Effort         string
 	TimeoutPerTurn time.Duration
 	SystemPrompt   string
 }
@@ -110,6 +111,11 @@ func (e *Engine) SetLLMDebugDumper(dumper *llm.DebugDumper) {
 	if e.ctxManager != nil {
 		e.ctxManager.SetDebugDumper(dumper)
 	}
+}
+
+// SetEffort updates the reasoning effort sent with future LLM requests.
+func (e *Engine) SetEffort(effort string) {
+	e.config.Effort = strings.ToLower(strings.TrimSpace(effort))
 }
 
 // ToolNames returns the names of registered tools.
@@ -258,6 +264,7 @@ func (ex *executor) callLLM(ctx context.Context) (*llm.CompletionResponse, error
 		Tools:       ex.filteredTools(),
 		Temperature: ex.engine.config.Temperature,
 		MaxTokens:   ex.engine.config.MaxTokens,
+		Effort:      ex.engine.config.Effort,
 	}
 
 	if ex.usesResponsesChain() && ex.responsesPreviousID != "" {

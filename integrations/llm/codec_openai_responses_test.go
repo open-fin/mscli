@@ -6,6 +6,26 @@ import (
 	"testing"
 )
 
+func TestOpenAIResponsesEncodeRequestIncludesReasoningEffort(t *testing.T) {
+	codec := newOpenAIResponsesCodec("gpt-5")
+	req := &CompletionRequest{
+		Messages: []Message{NewUserMessage("hello")},
+		Effort:   "xhigh",
+	}
+
+	body, err := codec.encodeRequest(req, false, "")
+	if err != nil {
+		t.Fatalf("encodeRequest failed: %v", err)
+	}
+
+	if body.Reasoning == nil {
+		t.Fatal("Reasoning = nil, want effort config")
+	}
+	if got, want := body.Reasoning.Effort, "xhigh"; got != want {
+		t.Fatalf("Reasoning.Effort = %q, want %q", got, want)
+	}
+}
+
 func TestOpenAIResponsesStreamIteratorSignalsBackgroundWorkWhenToolArgsFollowText(t *testing.T) {
 	stream := strings.Join([]string{
 		`data: {"type":"response.output_text.delta","delta":"好的，我来处理。","output_index":0}`,

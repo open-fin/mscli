@@ -25,6 +25,23 @@ func TestOpenAIEncodeStreamRequestIncludesUsage(t *testing.T) {
 	}
 }
 
+func TestOpenAIEncodeRequestIncludesReasoningEffort(t *testing.T) {
+	codec := newOpenAICodec("gpt-5")
+	req := &CompletionRequest{
+		Messages: []Message{NewUserMessage("hello")},
+		Effort:   "minimal",
+	}
+
+	body, err := codec.encodeRequest(req, false)
+	if err != nil {
+		t.Fatalf("encodeRequest failed: %v", err)
+	}
+
+	if got, want := body.ReasoningEffort, "minimal"; got != want {
+		t.Fatalf("ReasoningEffort = %q, want %q", got, want)
+	}
+}
+
 func TestOpenAIStreamIteratorCapturesUsageAfterFinishReason(t *testing.T) {
 	stream := strings.Join([]string{
 		`data: {"id":"chatcmpl-1","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"hi"}}]}`,

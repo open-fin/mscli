@@ -44,6 +44,7 @@ func (c *anthropicCodec) encodeRequest(req *CompletionRequest, stream bool) (ant
 		Model:         model,
 		System:        system,
 		Messages:      messages,
+		OutputConfig:  anthropicOutputConfigForEffort(req.Effort),
 		Temperature:   req.Temperature,
 		MaxTokens:     maxTokens,
 		TopP:          req.TopP,
@@ -209,15 +210,28 @@ func (c *anthropicCodec) newStreamIterator(body io.ReadCloser) StreamIterator {
 }
 
 type anthropicMessagesRequest struct {
-	Model         string             `json:"model"`
-	Messages      []anthropicMessage `json:"messages"`
-	System        string             `json:"system,omitempty"`
-	Temperature   *float32           `json:"temperature,omitempty"`
-	MaxTokens     *int               `json:"max_tokens,omitempty"`
-	TopP          float32            `json:"top_p,omitempty"`
-	StopSequences []string           `json:"stop_sequences,omitempty"`
-	Tools         []anthropicTool    `json:"tools,omitempty"`
-	Stream        bool               `json:"stream,omitempty"`
+	Model         string                 `json:"model"`
+	Messages      []anthropicMessage     `json:"messages"`
+	System        string                 `json:"system,omitempty"`
+	OutputConfig  *anthropicOutputConfig `json:"output_config,omitempty"`
+	Temperature   *float32               `json:"temperature,omitempty"`
+	MaxTokens     *int                   `json:"max_tokens,omitempty"`
+	TopP          float32                `json:"top_p,omitempty"`
+	StopSequences []string               `json:"stop_sequences,omitempty"`
+	Tools         []anthropicTool        `json:"tools,omitempty"`
+	Stream        bool                   `json:"stream,omitempty"`
+}
+
+type anthropicOutputConfig struct {
+	Effort string `json:"effort,omitempty"`
+}
+
+func anthropicOutputConfigForEffort(effort string) *anthropicOutputConfig {
+	effort = strings.ToLower(strings.TrimSpace(effort))
+	if effort == "" {
+		return nil
+	}
+	return &anthropicOutputConfig{Effort: effort}
 }
 
 type anthropicMessage struct {

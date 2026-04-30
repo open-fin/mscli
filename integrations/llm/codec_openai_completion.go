@@ -35,15 +35,16 @@ func (c *openAICodec) encodeRequest(req *CompletionRequest, stream bool) (openAI
 	}
 
 	return openAIChatCompletionRequest{
-		Model:         model,
-		Messages:      c.encodeMessages(req.Messages),
-		Temperature:   req.Temperature,
-		MaxTokens:     req.MaxTokens,
-		TopP:          req.TopP,
-		Stop:          req.Stop,
-		Tools:         c.encodeTools(req.Tools),
-		Stream:        stream,
-		StreamOptions: streamOptions,
+		Model:           model,
+		Messages:        c.encodeMessages(req.Messages),
+		ReasoningEffort: strings.ToLower(strings.TrimSpace(req.Effort)),
+		Temperature:     req.Temperature,
+		MaxTokens:       req.MaxTokens,
+		TopP:            req.TopP,
+		Stop:            req.Stop,
+		Tools:           c.encodeTools(req.Tools),
+		Stream:          stream,
+		StreamOptions:   streamOptions,
 	}, nil
 }
 
@@ -176,15 +177,16 @@ type openAIToolCallFunction struct {
 }
 
 type openAIChatCompletionRequest struct {
-	Model         string               `json:"model"`
-	Messages      []openAIMessage      `json:"messages"`
-	Temperature   *float32             `json:"temperature,omitempty"`
-	MaxTokens     *int                 `json:"max_tokens,omitempty"`
-	TopP          float32              `json:"top_p,omitempty"`
-	Stop          []string             `json:"stop,omitempty"`
-	Tools         []openAITool         `json:"tools,omitempty"`
-	Stream        bool                 `json:"stream"`
-	StreamOptions *openAIStreamOptions `json:"stream_options,omitempty"`
+	Model           string               `json:"model"`
+	Messages        []openAIMessage      `json:"messages"`
+	ReasoningEffort string               `json:"reasoning_effort,omitempty"`
+	Temperature     *float32             `json:"temperature,omitempty"`
+	MaxTokens       *int                 `json:"max_tokens,omitempty"`
+	TopP            float32              `json:"top_p,omitempty"`
+	Stop            []string             `json:"stop,omitempty"`
+	Tools           []openAITool         `json:"tools,omitempty"`
+	Stream          bool                 `json:"stream"`
+	StreamOptions   *openAIStreamOptions `json:"stream_options,omitempty"`
 }
 
 type openAIStreamOptions struct {

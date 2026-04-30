@@ -217,6 +217,30 @@ func TestRunPassesModelMaxTokensToProvider(t *testing.T) {
 	}
 }
 
+func TestRunPassesEffortToProvider(t *testing.T) {
+	provider := &captureProvider{}
+	engine := NewEngine(EngineConfig{
+		MaxIterations: 1,
+		ContextWindow: 8000,
+		Effort:        "xhigh",
+	}, provider, tools.NewRegistry())
+
+	_, err := engine.Run(Task{
+		ID:          "task-effort",
+		Description: "say hello",
+	})
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	if provider.lastReq == nil {
+		t.Fatal("expected provider to receive completion request")
+	}
+	if got, want := provider.lastReq.Effort, "xhigh"; got != want {
+		t.Fatalf("provider.lastReq.Effort = %q, want %q", got, want)
+	}
+}
+
 func TestRunCompletesWhenStopOccursAtIterationLimit(t *testing.T) {
 	provider := &scriptedStreamProvider{
 		responses: []*llm.CompletionResponse{{

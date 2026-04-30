@@ -788,6 +788,7 @@ func newEngineConfig(cfg *configs.Config, systemPrompt string) loop.EngineConfig
 		ContextWindow:  cfg.Context.Window,
 		MaxTokens:      requestMaxTokensPtr(cfg.Request.MaxTokens),
 		Temperature:    requestTemperaturePtr(cfg.Request.Temperature),
+		Effort:         configs.NormalizeEffort(cfg.Request.Effort),
 		TimeoutPerTurn: time.Duration(cfg.Model.TimeoutSec) * time.Second,
 		SystemPrompt:   systemPrompt,
 	}

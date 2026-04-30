@@ -154,6 +154,12 @@ func (r *Registry) registerDefaults() {
 	})
 
 	r.Register(Command{
+		Name:        "/effort",
+		Description: "Show or set model reasoning effort",
+		Usage:       "/effort [value]",
+	})
+
+	r.Register(Command{
 		Name:        "/exit",
 		Description: "Exit the application",
 		Usage:       "/exit",

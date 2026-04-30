@@ -41,6 +41,23 @@ func TestAnthropicEncodeRequestPreservesExplicitMaxTokens(t *testing.T) {
 	}
 }
 
+func TestAnthropicEncodeRequestIncludesOutputEffort(t *testing.T) {
+	req, err := newAnthropicCodec("claude-test").encodeRequest(&CompletionRequest{
+		Messages: []Message{{Role: "user", Content: "ping"}},
+		Effort:   "max",
+	}, false)
+	if err != nil {
+		t.Fatalf("encodeRequest() error = %v", err)
+	}
+
+	if req.OutputConfig == nil {
+		t.Fatal("req.OutputConfig = nil, want effort config")
+	}
+	if got, want := req.OutputConfig.Effort, "max"; got != want {
+		t.Fatalf("req.OutputConfig.Effort = %q, want %q", got, want)
+	}
+}
+
 func TestAnthropicStreamIteratorAccumulatesToolUseJSONWithoutBuilderCopyPanic(t *testing.T) {
 	stream := strings.Join([]string{
 		mustAnthropicSSEEvent(t, "message_start", anthropicStreamMessageStartEvent{
