@@ -156,6 +156,40 @@ func TestRunUsesSystemPromptAfterContextManagerSwap(t *testing.T) {
 	}
 }
 
+func TestRunUsesTaskUserMessageForContextAndDescriptionForEvents(t *testing.T) {
+	provider := &captureProvider{}
+	engine := newEngineForContextTests(provider)
+
+	events, err := engine.Run(Task{
+		ID:          "task-custom-user-message",
+		Description: "visible task",
+		UserMessage: "context-injected task",
+	})
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	if provider.lastReq == nil {
+		t.Fatal("expected provider to receive completion request")
+	}
+	if len(provider.lastReq.Messages) < 2 {
+		t.Fatalf("expected at least 2 messages (system + user), got %d", len(provider.lastReq.Messages))
+	}
+	user := provider.lastReq.Messages[1]
+	if user.Role != "user" {
+		t.Fatalf("expected second message role to be user, got %q", user.Role)
+	}
+	if got, want := user.Content, "context-injected task"; got != want {
+		t.Fatalf("user message content = %q, want %q", got, want)
+	}
+	if len(events) == 0 || events[0].Type != EventTaskStarted {
+		t.Fatalf("first event = %#v, want TaskStarted", events)
+	}
+	if got, want := events[0].Message, "Task: visible task"; got != want {
+		t.Fatalf("task started message = %q, want %q", got, want)
+	}
+}
+
 func TestRunPassesModelMaxTokensToProvider(t *testing.T) {
 	provider := &captureProvider{}
 	engine := NewEngine(EngineConfig{

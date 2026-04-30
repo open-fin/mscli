@@ -11,7 +11,7 @@ import (
 	"github.com/mindspore-lab/mindspore-cli/ui/model"
 )
 
-func TestBuildEffectiveSystemPromptIncludesAutoMemoryPathAndIndex(t *testing.T) {
+func TestBuildInitialUserContextPromptIncludesAutoMemoryPathAndIndex(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -28,9 +28,12 @@ func TestBuildEffectiveSystemPromptIncludesAutoMemoryPathAndIndex(t *testing.T) 
 		t.Fatalf("WriteFile(MEMORY.md) error = %v", err)
 	}
 
-	prompt, memoryCfg, err := buildEffectiveSystemPrompt(workDir, nil)
+	systemPrompt, memoryCfg, err := buildEffectiveSystemPrompt(workDir, nil)
 	if err != nil {
 		t.Fatalf("buildEffectiveSystemPrompt() error = %v", err)
+	}
+	if strings.Contains(systemPrompt, "# auto memory") {
+		t.Fatalf("system prompt contains memory instructions:\n%s", systemPrompt)
 	}
 
 	if !memoryCfg.Enabled {
@@ -39,10 +42,16 @@ func TestBuildEffectiveSystemPromptIncludesAutoMemoryPathAndIndex(t *testing.T) 
 	if got, want := memoryCfg.Dir, memoryDir; got != want {
 		t.Fatalf("memory dir = %q, want %q", got, want)
 	}
+
+	prompt, err := buildInitialUserContextPrompt(workDir, memoryCfg)
+	if err != nil {
+		t.Fatalf("buildInitialUserContextPrompt() error = %v", err)
+	}
 	for _, want := range []string{
-		"## Persistent Memory",
+		"# auto memory",
 		memoryDir,
 		"Use read, write, edit, grep, and glob",
+		"## Types of memory",
 		"Remember batch size defaults to 8.",
 	} {
 		if !strings.Contains(prompt, want) {
@@ -51,7 +60,7 @@ func TestBuildEffectiveSystemPromptIncludesAutoMemoryPathAndIndex(t *testing.T) 
 	}
 }
 
-func TestBuildEffectiveSystemPromptCapsMemoryIndex(t *testing.T) {
+func TestBuildInitialUserContextPromptCapsMemoryIndex(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -69,9 +78,13 @@ func TestBuildEffectiveSystemPromptCapsMemoryIndex(t *testing.T) {
 		t.Fatalf("WriteFile(MEMORY.md) error = %v", err)
 	}
 
-	prompt, _, err := buildEffectiveSystemPrompt(workDir, nil)
+	_, memoryCfg, err := buildEffectiveSystemPrompt(workDir, nil)
 	if err != nil {
 		t.Fatalf("buildEffectiveSystemPrompt() error = %v", err)
+	}
+	prompt, err := buildInitialUserContextPrompt(workDir, memoryCfg)
+	if err != nil {
+		t.Fatalf("buildInitialUserContextPrompt() error = %v", err)
 	}
 
 	if strings.Contains(prompt, "TAIL") {
@@ -96,8 +109,15 @@ func TestBuildEffectiveSystemPromptRespectsMemoryDisabled(t *testing.T) {
 	if memoryCfg.Enabled {
 		t.Fatal("memory config enabled, want disabled")
 	}
-	if strings.Contains(prompt, "## Persistent Memory") {
+	if strings.Contains(prompt, "# auto memory") {
 		t.Fatalf("prompt contains memory instructions while disabled:\n%s", prompt)
+	}
+	contextPrompt, err := buildInitialUserContextPrompt(workDir, memoryCfg)
+	if err != nil {
+		t.Fatalf("buildInitialUserContextPrompt() error = %v", err)
+	}
+	if strings.Contains(contextPrompt, "# auto memory") {
+		t.Fatalf("initial user context contains memory instructions while disabled:\n%s", contextPrompt)
 	}
 	bucketDir, err := session.BucketDirForWorkDir(workDir)
 	if err != nil {
@@ -108,7 +128,7 @@ func TestBuildEffectiveSystemPromptRespectsMemoryDisabled(t *testing.T) {
 	}
 }
 
-func TestBuildEffectiveSystemPromptUsesMemoryPathOverride(t *testing.T) {
+func TestBuildInitialUserContextPromptUsesMemoryPathOverride(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -116,7 +136,7 @@ func TestBuildEffectiveSystemPromptUsesMemoryPathOverride(t *testing.T) {
 	overrideDir := filepath.Join(t.TempDir(), "custom-memory")
 	t.Setenv("MSCLI_MEMORY_PATH", overrideDir)
 
-	prompt, memoryCfg, err := buildEffectiveSystemPrompt(workDir, nil)
+	systemPrompt, memoryCfg, err := buildEffectiveSystemPrompt(workDir, nil)
 	if err != nil {
 		t.Fatalf("buildEffectiveSystemPrompt() error = %v", err)
 	}
@@ -124,15 +144,22 @@ func TestBuildEffectiveSystemPromptUsesMemoryPathOverride(t *testing.T) {
 	if got, want := memoryCfg.Dir, overrideDir; got != want {
 		t.Fatalf("memory dir = %q, want override %q", got, want)
 	}
-	if !strings.Contains(prompt, overrideDir) {
-		t.Fatalf("prompt missing override dir %q", overrideDir)
+	if strings.Contains(systemPrompt, overrideDir) {
+		t.Fatalf("system prompt contains override memory dir %q:\n%s", overrideDir, systemPrompt)
+	}
+	contextPrompt, err := buildInitialUserContextPrompt(workDir, memoryCfg)
+	if err != nil {
+		t.Fatalf("buildInitialUserContextPrompt() error = %v", err)
+	}
+	if !strings.Contains(contextPrompt, overrideDir) {
+		t.Fatalf("initial user context missing override dir %q", overrideDir)
 	}
 	if _, err := os.Stat(overrideDir); err != nil {
 		t.Fatalf("expected override memory dir created: %v", err)
 	}
 }
 
-func TestBuildEffectiveSystemPromptLoadsMSCLIInstructionsInPriorityOrder(t *testing.T) {
+func TestBuildInitialUserContextPromptLoadsMSCLIInstructionsInPriorityOrder(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("MSCLI_MEMORY_ENABLED", "false")
@@ -159,9 +186,16 @@ func TestBuildEffectiveSystemPromptLoadsMSCLIInstructionsInPriorityOrder(t *test
 		}
 	}
 
-	prompt, _, err := buildEffectiveSystemPrompt(workDir, nil)
+	systemPrompt, memoryCfg, err := buildEffectiveSystemPrompt(workDir, nil)
 	if err != nil {
 		t.Fatalf("buildEffectiveSystemPrompt() error = %v", err)
+	}
+	if strings.Contains(systemPrompt, "global instructions") {
+		t.Fatalf("system prompt contains MSCLI.md instructions:\n%s", systemPrompt)
+	}
+	prompt, err := buildInitialUserContextPrompt(workDir, memoryCfg)
+	if err != nil {
+		t.Fatalf("buildInitialUserContextPrompt() error = %v", err)
 	}
 
 	assertPromptOrder(t, prompt,
@@ -173,7 +207,7 @@ func TestBuildEffectiveSystemPromptLoadsMSCLIInstructionsInPriorityOrder(t *test
 	)
 }
 
-func TestCmdClearRebuildsSystemPromptFromDisk(t *testing.T) {
+func TestCmdClearKeepsMSCLIInstructionsOutOfSystemPrompt(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("MSCLI_MEMORY_ENABLED", "false")
@@ -205,11 +239,8 @@ func TestCmdClearRebuildsSystemPromptFromDisk(t *testing.T) {
 	if system == nil {
 		t.Fatal("system prompt nil after clear")
 	}
-	if !strings.Contains(system.Content, "after clear") {
-		t.Fatalf("system prompt missing updated instructions:\n%s", system.Content)
-	}
-	if strings.Contains(system.Content, "before clear") {
-		t.Fatalf("system prompt contains stale instructions:\n%s", system.Content)
+	if strings.Contains(system.Content, "before clear") || strings.Contains(system.Content, "after clear") {
+		t.Fatalf("system prompt contains MSCLI.md instructions after clear:\n%s", system.Content)
 	}
 }
 

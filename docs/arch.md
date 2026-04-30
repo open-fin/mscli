@@ -63,7 +63,7 @@ runTask:
   -> compose effective conversation context:
        EngineConfig.SystemPrompt
        + skill summaries (from integrations/skills)
-       + file-backed auto-memory and MSCLI.md instructions (from internal/app)
+       + first-user-message injection of file-backed auto-memory and MSCLI.md instructions (from internal/app)
        + any skill content preloaded by /skill
   -> agent/loop.Engine.RunWithContext(task)
   -> tools.Registry
@@ -100,7 +100,8 @@ Free text uses the base system prompt which includes skill summaries
 - **`internal/app/`**
   Loads config, wires dependencies, starts the TUI, handles slash commands,
   dispatches tasks to the engine, converts `loop.Event` to `ui/model.Event`,
-  and owns file-backed auto-memory plus `MSCLI.md` prompt injection.
+  and owns first-user-message injection for file-backed auto-memory plus
+  `MSCLI.md` instructions.
 
 - **`agent/loop/`**
   The core runtime. Runs the LLM/tool loop: tool calling, permission checks,

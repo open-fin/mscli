@@ -171,13 +171,14 @@ type contextCompactionNotice struct {
 const ContextCompactStartMessage = "compacting conversation..."
 
 func (ex *executor) run(ctx context.Context) ([]Event, error) {
-	notice, err := ex.addContextMessage(ctx, llm.NewUserMessage(ex.task.Description))
+	userMessage := ex.task.userMessageContent()
+	notice, err := ex.addContextMessage(ctx, llm.NewUserMessage(userMessage))
 	if err != nil {
 		ex.addEvent(NewEvent(EventTaskFailed, fmt.Sprintf("Persist message error: %v", err)))
 		return ex.events, err
 	}
 	if ex.engine.recorder != nil && ex.engine.recorder.RecordUserInput != nil {
-		if err := ex.engine.recorder.RecordUserInput(ex.task.Description); err != nil {
+		if err := ex.engine.recorder.RecordUserInput(userMessage); err != nil {
 			ex.addEvent(NewEvent(EventTaskFailed, fmt.Sprintf("Persist message error: %v", err)))
 			return ex.events, err
 		}
@@ -232,6 +233,13 @@ func (ex *executor) run(ctx context.Context) ([]Event, error) {
 	}
 
 	return ex.events, nil
+}
+
+func (t Task) userMessageContent() string {
+	if strings.TrimSpace(t.UserMessage) != "" {
+		return t.UserMessage
+	}
+	return t.Description
 }
 
 func (ex *executor) callLLM(ctx context.Context) (*llm.CompletionResponse, error) {

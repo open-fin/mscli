@@ -33,7 +33,12 @@ func (p *singleReplyProvider) Complete(_ context.Context, req *llm.CompletionReq
 	return &llm.CompletionResponse{Content: p.content, FinishReason: llm.FinishStop, Usage: p.usage}, nil
 }
 
-func (p *singleReplyProvider) CompleteStream(context.Context, *llm.CompletionRequest) (llm.StreamIterator, error) {
+func (p *singleReplyProvider) CompleteStream(_ context.Context, req *llm.CompletionRequest) (llm.StreamIterator, error) {
+	copied := *req
+	copied.Messages = append([]llm.Message(nil), req.Messages...)
+	copied.Tools = append([]llm.Tool(nil), req.Tools...)
+	p.lastReq = &copied
+
 	return &singleReplyIterator{
 		chunks: []llm.StreamChunk{
 			{Content: p.content, FinishReason: llm.FinishStop, Usage: &p.usage},
@@ -212,6 +217,107 @@ func TestRunTaskPersistsSessionAfterLiveLLMReply(t *testing.T) {
 	}
 	if !jsonEqualRaw(t, usage.Usage.Raw, json.RawMessage(`{"prompt_tokens":1660,"completion_tokens":149,"total_tokens":1809,"cached_tokens":32}`)) {
 		t.Fatalf("usage.Usage.Raw = %s, want semantic match", string(usage.Usage.Raw))
+	}
+}
+
+func TestRunTaskInjectsMemoryAndMSCLIIntoFirstUserMessage(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	workDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workDir, "MSCLI.md"), []byte("project instructions"), 0o644); err != nil {
+		t.Fatalf("write MSCLI.md: %v", err)
+	}
+	memoryDir := filepath.Join(t.TempDir(), "memory")
+	t.Setenv("MSCLI_MEMORY_PATH", memoryDir)
+	memoryCfg, err := resolveAutoMemoryConfig(workDir)
+	if err != nil {
+		t.Fatalf("resolveAutoMemoryConfig() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(memoryDir, memoryIndexFilename), []byte("Remember batch size defaults to 8.\n"), 0o644); err != nil {
+		t.Fatalf("write MEMORY.md: %v", err)
+	}
+
+	systemPrompt := buildBaseSystemPrompt(nil)
+	runtimeSession, err := session.Create(workDir, systemPrompt)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = runtimeSession.Close()
+	})
+
+	ctxManager := agentctx.NewManager(agentctx.ManagerConfig{
+		ContextWindow: 200000,
+		ReserveTokens: 20000,
+	})
+	ctxManager.SetSystemPrompt(systemPrompt)
+
+	provider := &singleReplyProvider{content: "ok"}
+	engine := loop.NewEngine(loop.EngineConfig{
+		MaxIterations: 1,
+		ContextWindow: 200000,
+		SystemPrompt:  systemPrompt,
+	}, provider, tools.NewRegistry())
+	engine.SetContextManager(ctxManager)
+
+	app := &Application{
+		Engine:       engine,
+		EventCh:      make(chan model.Event, 32),
+		WorkDir:      workDir,
+		llmReady:     true,
+		session:      runtimeSession,
+		ctxManager:   ctxManager,
+		memoryConfig: memoryCfg,
+	}
+	engine.SetTrajectoryRecorder(newTrajectoryRecorder(runtimeSession, ctxManager, workDir, memoryCfg, app.noteLiveLLMActivity))
+
+	app.runTask("hello")
+
+	if provider.lastReq == nil {
+		t.Fatal("expected provider to receive completion request")
+	}
+	if len(provider.lastReq.Messages) < 2 {
+		t.Fatalf("request messages = %d, want at least system + user", len(provider.lastReq.Messages))
+	}
+	system := provider.lastReq.Messages[0]
+	if system.Role != "system" {
+		t.Fatalf("first request message role = %q, want system", system.Role)
+	}
+	for _, forbidden := range []string{"# auto memory", "project instructions"} {
+		if strings.Contains(system.Content, forbidden) {
+			t.Fatalf("system prompt contains %q:\n%s", forbidden, system.Content)
+		}
+	}
+
+	firstUser := provider.lastReq.Messages[1]
+	if firstUser.Role != "user" {
+		t.Fatalf("second request message role = %q, want user", firstUser.Role)
+	}
+	for _, want := range []string{
+		initialUserContextTag,
+		"# auto memory",
+		"Remember batch size defaults to 8.",
+		"project instructions",
+		"## User Request",
+		"hello",
+	} {
+		if !strings.Contains(firstUser.Content, want) {
+			t.Fatalf("first user message missing %q:\n%s", want, firstUser.Content)
+		}
+	}
+
+	app.runTask("again")
+
+	if provider.lastReq == nil {
+		t.Fatal("expected provider to receive second completion request")
+	}
+	messages := provider.lastReq.Messages
+	last := messages[len(messages)-1]
+	if got, want := last.Role, "user"; got != want {
+		t.Fatalf("last message role = %q, want %q", got, want)
+	}
+	if got, want := last.Content, "again"; got != want {
+		t.Fatalf("second task user message = %q, want %q", got, want)
 	}
 }
 

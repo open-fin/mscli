@@ -10,6 +10,8 @@ import (
 type Task struct {
 	ID                   string
 	Description          string
+	// UserMessage overrides the context message while Description remains the visible task label.
+	UserMessage          string
 	Context              map[string]string
 	DisableResearchTools bool
 }

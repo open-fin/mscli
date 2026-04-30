@@ -315,7 +315,17 @@ func (a *Application) runTaskWithOptions(description string, disableResearchTool
 		Description:          description,
 		DisableResearchTools: disableResearchTools,
 	}
-	if a.ctxManager != nil && a.ctxManager.ShouldCompactAfterAdding(llm.NewUserMessage(description)) {
+	userMessage, err := a.buildTaskUserMessage(description)
+	if err != nil {
+		emit(model.Event{
+			Type:     model.ToolError,
+			ToolName: "context",
+			Message:  fmt.Sprintf("Failed to build initial user context: %v", err),
+		})
+		return
+	}
+	task.UserMessage = userMessage
+	if a.ctxManager != nil && a.ctxManager.ShouldCompactAfterAdding(llm.NewUserMessage(userMessage)) {
 		emit(model.Event{
 			Type: model.ContextCompactStarted,
 		})
@@ -323,7 +333,7 @@ func (a *Application) runTaskWithOptions(description string, disableResearchTool
 	ctx, runID := a.beginTaskRun()
 	defer a.finishTaskRun(runID)
 
-	err := a.Engine.RunWithContextStream(ctx, task, func(ev loop.Event) {
+	err = a.Engine.RunWithContextStream(ctx, task, func(ev loop.Event) {
 		uiEvent := convertLoopEvent(ev)
 		if uiEvent != nil {
 			emit(*uiEvent)
@@ -394,6 +404,29 @@ func (a *Application) emitMaxIterationDecisionPrompt(prefix string) {
 		message = prefix + "\n" + message
 	}
 	a.EventCh <- model.Event{Type: model.AgentReply, Message: message}
+}
+
+func (a *Application) buildTaskUserMessage(userInput string) (string, error) {
+	if a == nil || !a.memoryConfig.Resolved || !a.shouldInjectInitialUserContext() {
+		return userInput, nil
+	}
+	memory, err := a.activeAutoMemoryConfig()
+	if err != nil {
+		return "", err
+	}
+	return buildInitialUserMessage(a.WorkDir, memory, userInput)
+}
+
+func (a *Application) shouldInjectInitialUserContext() bool {
+	if a == nil || a.ctxManager == nil {
+		return false
+	}
+	for _, msg := range a.ctxManager.GetNonSystemMessages() {
+		if strings.TrimSpace(msg.Role) == "user" && strings.Contains(msg.Content, initialUserContextTag) {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *Application) beginTaskRun() (context.Context, uint64) {
