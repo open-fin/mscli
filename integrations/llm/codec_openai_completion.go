@@ -48,21 +48,44 @@ func (c *openAICodec) encodeRequest(req *CompletionRequest, stream bool) (openAI
 	}, nil
 }
 
-func (c *openAICodec) encodeMessages(msgs []Message) []openAIMessage {
+func (c *openAICodec) encodeMessages(msgs []Message) []openAIRequestMessage {
 	if len(msgs) == 0 {
 		return nil
 	}
 
-	result := make([]openAIMessage, len(msgs))
+	result := make([]openAIRequestMessage, len(msgs))
 	for i, m := range msgs {
-		result[i] = openAIMessage{
+		result[i] = openAIRequestMessage{
 			Role:       m.Role,
-			Content:    m.Content,
+			Content:    encodeOpenAIMessageContent(m),
 			ToolCalls:  c.encodeToolCalls(m.ToolCalls),
 			ToolCallID: m.ToolCallID,
 		}
 	}
 	return result
+}
+
+func encodeOpenAIMessageContent(msg Message) any {
+	if len(msg.ContentParts) == 0 {
+		return msg.Content
+	}
+	parts := make([]openAIMessageContentPart, 0, len(msg.ContentParts))
+	for _, part := range msg.ContentParts {
+		if part.Type != "" && part.Type != "text" {
+			continue
+		}
+		if part.Text == "" {
+			continue
+		}
+		parts = append(parts, openAIMessageContentPart{
+			Type: "text",
+			Text: part.Text,
+		})
+	}
+	if len(parts) == 0 {
+		return msg.Content
+	}
+	return parts
 }
 
 func (c *openAICodec) encodeToolCalls(calls []ToolCall) []openAIToolCall {
@@ -147,6 +170,18 @@ func (c *openAICodec) newStreamIterator(body io.ReadCloser) StreamIterator {
 	}
 }
 
+type openAIRequestMessage struct {
+	Role       string           `json:"role"`
+	Content    any              `json:"content"`
+	ToolCalls  []openAIToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
+}
+
+type openAIMessageContentPart struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+}
+
 type openAIMessage struct {
 	Role       string           `json:"role"`
 	Content    string           `json:"content"`
@@ -177,16 +212,16 @@ type openAIToolCallFunction struct {
 }
 
 type openAIChatCompletionRequest struct {
-	Model           string               `json:"model"`
-	Messages        []openAIMessage      `json:"messages"`
-	ReasoningEffort string               `json:"reasoning_effort,omitempty"`
-	Temperature     *float32             `json:"temperature,omitempty"`
-	MaxTokens       *int                 `json:"max_tokens,omitempty"`
-	TopP            float32              `json:"top_p,omitempty"`
-	Stop            []string             `json:"stop,omitempty"`
-	Tools           []openAITool         `json:"tools,omitempty"`
-	Stream          bool                 `json:"stream"`
-	StreamOptions   *openAIStreamOptions `json:"stream_options,omitempty"`
+	Model           string                 `json:"model"`
+	Messages        []openAIRequestMessage `json:"messages"`
+	ReasoningEffort string                 `json:"reasoning_effort,omitempty"`
+	Temperature     *float32               `json:"temperature,omitempty"`
+	MaxTokens       *int                   `json:"max_tokens,omitempty"`
+	TopP            float32                `json:"top_p,omitempty"`
+	Stop            []string               `json:"stop,omitempty"`
+	Tools           []openAITool           `json:"tools,omitempty"`
+	Stream          bool                   `json:"stream"`
+	StreamOptions   *openAIStreamOptions   `json:"stream_options,omitempty"`
 }
 
 type openAIStreamOptions struct {

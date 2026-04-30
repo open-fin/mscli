@@ -81,7 +81,20 @@ func (c *anthropicCodec) encodeMessages(msgs []Message) (string, []anthropicMess
 
 func (c *anthropicCodec) encodeMessage(msg Message) (anthropicMessage, bool) {
 	content := make([]anthropicContentBlock, 0, 1+len(msg.ToolCalls))
-	if msg.Content != "" {
+	if len(msg.ContentParts) > 0 {
+		for _, part := range msg.ContentParts {
+			if part.Type != "" && part.Type != "text" {
+				continue
+			}
+			if part.Text == "" {
+				continue
+			}
+			content = append(content, anthropicContentBlock{
+				Type: "text",
+				Text: part.Text,
+			})
+		}
+	} else if msg.Content != "" {
 		content = append(content, anthropicContentBlock{
 			Type: "text",
 			Text: msg.Content,

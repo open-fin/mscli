@@ -322,6 +322,21 @@ func TestRunTaskInjectsMemoryAndMSCLIAsSeparateInitialUserMessage(t *testing.T) 
 			t.Fatalf("context user message contains %q:\n%s", forbidden, contextUser.Content)
 		}
 	}
+	if got, want := len(contextUser.ContentParts), 2; got != want {
+		t.Fatalf("context user content parts = %d, want %d: %#v", got, want, contextUser.ContentParts)
+	}
+	if !strings.Contains(contextUser.ContentParts[0].Text, "Remember batch size defaults to 8.") {
+		t.Fatalf("memory content part missing memory index:\n%s", contextUser.ContentParts[0].Text)
+	}
+	if strings.Contains(contextUser.ContentParts[0].Text, "project instructions") {
+		t.Fatalf("memory content part contains MSCLI.md content:\n%s", contextUser.ContentParts[0].Text)
+	}
+	if !strings.Contains(contextUser.ContentParts[1].Text, "project instructions") {
+		t.Fatalf("MSCLI.md content part missing project instructions:\n%s", contextUser.ContentParts[1].Text)
+	}
+	if strings.Contains(contextUser.ContentParts[1].Text, "Remember batch size defaults to 8.") {
+		t.Fatalf("MSCLI.md content part contains memory index:\n%s", contextUser.ContentParts[1].Text)
+	}
 	realUser := provider.lastReq.Messages[2]
 	if realUser.Role != "user" {
 		t.Fatalf("third request message role = %q, want user", realUser.Role)

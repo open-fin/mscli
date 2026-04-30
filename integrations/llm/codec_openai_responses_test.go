@@ -26,6 +26,40 @@ func TestOpenAIResponsesEncodeRequestIncludesReasoningEffort(t *testing.T) {
 	}
 }
 
+func TestOpenAIResponsesEncodeRequestUsesStructuredTextParts(t *testing.T) {
+	codec := newOpenAIResponsesCodec("gpt-5")
+	req := &CompletionRequest{
+		Messages: []Message{NewUserMessageParts([]MessageContentPart{
+			NewTextContentPart("memory context"),
+			NewTextContentPart("MSCLI.md context"),
+		})},
+	}
+
+	body, err := codec.encodeRequest(req, false, "")
+	if err != nil {
+		t.Fatalf("encodeRequest failed: %v", err)
+	}
+	if got, want := len(body.Input), 1; got != want {
+		t.Fatalf("input items = %d, want %d", got, want)
+	}
+	parts, ok := body.Input[0].Content.([]openAIResponsesMessageContentPart)
+	if !ok {
+		t.Fatalf("input content = %#v, want structured text parts", body.Input[0].Content)
+	}
+	if got, want := len(parts), 2; got != want {
+		t.Fatalf("content parts = %d, want %d", got, want)
+	}
+	if got, want := parts[0].Type, "input_text"; got != want {
+		t.Fatalf("part[0].Type = %q, want %q", got, want)
+	}
+	if got, want := parts[0].Text, "memory context"; got != want {
+		t.Fatalf("part[0].Text = %q, want %q", got, want)
+	}
+	if got, want := parts[1].Text, "MSCLI.md context"; got != want {
+		t.Fatalf("part[1].Text = %q, want %q", got, want)
+	}
+}
+
 func TestOpenAIResponsesStreamIteratorSignalsBackgroundWorkWhenToolArgsFollowText(t *testing.T) {
 	stream := strings.Join([]string{
 		`data: {"type":"response.output_text.delta","delta":"好的，我来处理。","output_index":0}`,

@@ -77,11 +77,11 @@ func (c *openAIResponsesCodec) encodeMessages(msgs []Message, allowOrphanToolOut
 				Output: msg.Content,
 			})
 		default:
-			if text := strings.TrimSpace(msg.Content); text != "" {
+			if hasMessageContent(msg) {
 				items = append(items, openAIResponsesInputItem{
 					Type:    "message",
 					Role:    msg.Role,
-					Content: msg.Content,
+					Content: encodeOpenAIResponsesMessageContent(msg),
 				})
 			}
 			for _, call := range msg.ToolCalls {
@@ -101,6 +101,47 @@ func (c *openAIResponsesCodec) encodeMessages(msgs []Message, allowOrphanToolOut
 	}
 
 	return strings.Join(systemParts, "\n\n"), items
+}
+
+func hasMessageContent(msg Message) bool {
+	if strings.TrimSpace(msg.Content) != "" {
+		return true
+	}
+	for _, part := range msg.ContentParts {
+		if part.Type == "" || part.Type == "text" {
+			if strings.TrimSpace(part.Text) != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func encodeOpenAIResponsesMessageContent(msg Message) any {
+	if len(msg.ContentParts) == 0 {
+		return msg.Content
+	}
+	partType := "input_text"
+	if msg.Role == "assistant" {
+		partType = "output_text"
+	}
+	parts := make([]openAIResponsesMessageContentPart, 0, len(msg.ContentParts))
+	for _, part := range msg.ContentParts {
+		if part.Type != "" && part.Type != "text" {
+			continue
+		}
+		if part.Text == "" {
+			continue
+		}
+		parts = append(parts, openAIResponsesMessageContentPart{
+			Type: partType,
+			Text: part.Text,
+		})
+	}
+	if len(parts) == 0 {
+		return msg.Content
+	}
+	return parts
 }
 
 func (c *openAIResponsesCodec) encodeTools(tools []Tool) []openAIResponsesTool {
@@ -210,6 +251,11 @@ type openAIResponsesInputItem struct {
 	Name      string `json:"name,omitempty"`
 	Arguments string `json:"arguments,omitempty"`
 	Output    string `json:"output,omitempty"`
+}
+
+type openAIResponsesMessageContentPart struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
 }
 
 type openAIResponsesTool struct {

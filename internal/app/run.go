@@ -415,14 +415,14 @@ func (a *Application) buildTaskInitialMessages() ([]llm.Message, error) {
 	if err != nil {
 		return nil, err
 	}
-	content, err := buildInitialUserContextMessage(a.WorkDir, memory)
+	msg, err := buildInitialUserContextMessage(a.WorkDir, memory)
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(content) == "" {
+	if strings.TrimSpace(msg.Content) == "" && len(msg.ContentParts) == 0 {
 		return nil, nil
 	}
-	return []llm.Message{llm.NewUserMessage(content)}, nil
+	return []llm.Message{msg}, nil
 }
 
 func (a *Application) shouldInjectInitialUserContext() bool {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/mindspore-lab/mindspore-cli/agent/loop"
 	"github.com/mindspore-lab/mindspore-cli/agent/session"
+	"github.com/mindspore-lab/mindspore-cli/integrations/llm"
 	"github.com/mindspore-lab/mindspore-cli/integrations/skills"
 )
 
@@ -164,49 +165,61 @@ func buildAutoMemoryContextPrompt(memoryDir string) (string, error) {
 	return b.String(), nil
 }
 
-func buildInitialUserContextPrompt(workDir string, memory autoMemoryConfig) (string, error) {
-	var parts []string
+func buildInitialUserContextParts(workDir string, memory autoMemoryConfig) ([]llm.MessageContentPart, error) {
+	var parts []llm.MessageContentPart
 
 	if memory.Enabled {
 		memoryPrompt, err := buildAutoMemoryContextPrompt(memory.Dir)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		if strings.TrimSpace(memoryPrompt) != "" {
-			parts = append(parts, memoryPrompt)
+			parts = append(parts, llm.NewTextContentPart(wrapInitialUserContextPart("auto memory context", memoryPrompt)))
 		}
 	}
 
 	mscliPrompt, err := buildMSCLIInstructionsPrompt(workDir)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if strings.TrimSpace(mscliPrompt) != "" {
-		parts = append(parts, mscliPrompt)
+		parts = append(parts, llm.NewTextContentPart(wrapInitialUserContextPart("MSCLI.md instructions", mscliPrompt)))
 	}
 
-	return strings.Join(parts, "\n\n"), nil
+	return parts, nil
 }
 
-func buildInitialUserContextMessage(workDir string, memory autoMemoryConfig) (string, error) {
-	contextPrompt, err := buildInitialUserContextPrompt(workDir, memory)
+func buildInitialUserContextPrompt(workDir string, memory autoMemoryConfig) (string, error) {
+	parts, err := buildInitialUserContextParts(workDir, memory)
 	if err != nil {
 		return "", err
 	}
-	return injectInitialUserContext(contextPrompt), nil
+	return llm.MessageContentPartsText(parts), nil
 }
 
-func injectInitialUserContext(contextPrompt string) string {
-	contextPrompt = strings.TrimSpace(contextPrompt)
-	if contextPrompt == "" {
+func buildInitialUserContextMessage(workDir string, memory autoMemoryConfig) (llm.Message, error) {
+	parts, err := buildInitialUserContextParts(workDir, memory)
+	if err != nil {
+		return llm.Message{}, err
+	}
+	if len(parts) == 0 {
+		return llm.Message{}, nil
+	}
+	return llm.NewUserMessageParts(parts), nil
+}
+
+func wrapInitialUserContextPart(label, content string) string {
+	content = strings.TrimSpace(content)
+	if content == "" {
 		return ""
 	}
-
 	var b strings.Builder
 	b.WriteString(initialUserContextTag)
 	b.WriteString("\n\n")
-	b.WriteString("The following context was loaded by MSCLI before the user's first request. Use it as session context and instructions, not as a separate request.\n\n")
-	b.WriteString(contextPrompt)
+	b.WriteString("The following ")
+	b.WriteString(label)
+	b.WriteString(" was loaded by MSCLI before the user's first request. Use it as session context and instructions, not as a separate request.\n\n")
+	b.WriteString(content)
 	return b.String()
 }
 

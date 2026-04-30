@@ -4,6 +4,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"strings"
 )
 
 // Provider is the unified interface for LLM services.
@@ -58,10 +59,17 @@ const (
 
 // Message represents a chat message.
 type Message struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Role         string               `json:"role"`
+	Content      string               `json:"content"`
+	ContentParts []MessageContentPart `json:"content_parts,omitempty"`
+	ToolCalls    []ToolCall           `json:"tool_calls,omitempty"`
+	ToolCallID   string               `json:"tool_call_id,omitempty"`
+}
+
+// MessageContentPart represents one structured text content part.
+type MessageContentPart struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
 }
 
 // Tool represents a tool definition.
@@ -178,6 +186,15 @@ func NewUserMessage(content string) Message {
 	return Message{Role: "user", Content: content}
 }
 
+// NewUserMessageParts creates a user message with structured text parts.
+func NewUserMessageParts(parts []MessageContentPart) Message {
+	return Message{
+		Role:         "user",
+		Content:      MessageContentPartsText(parts),
+		ContentParts: normalizeMessageContentParts(parts),
+	}
+}
+
 // NewSystemMessage creates a new system message.
 func NewSystemMessage(content string) Message {
 	return Message{Role: "system", Content: content}
@@ -191,4 +208,44 @@ func NewAssistantMessage(content string) Message {
 // NewToolMessage creates a new tool message.
 func NewToolMessage(toolCallID, content string) Message {
 	return Message{Role: "tool", Content: content, ToolCallID: toolCallID}
+}
+
+// NewTextContentPart creates a text content part.
+func NewTextContentPart(text string) MessageContentPart {
+	return MessageContentPart{Type: "text", Text: text}
+}
+
+// MessageContentPartsText returns a plain-text rendering of structured parts.
+func MessageContentPartsText(parts []MessageContentPart) string {
+	if len(parts) == 0 {
+		return ""
+	}
+	texts := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part.Type != "" && part.Type != "text" {
+			continue
+		}
+		if part.Text == "" {
+			continue
+		}
+		texts = append(texts, part.Text)
+	}
+	return strings.Join(texts, "\n\n")
+}
+
+func normalizeMessageContentParts(parts []MessageContentPart) []MessageContentPart {
+	if len(parts) == 0 {
+		return nil
+	}
+	normalized := make([]MessageContentPart, 0, len(parts))
+	for _, part := range parts {
+		if part.Type == "" {
+			part.Type = "text"
+		}
+		if part.Type != "text" || part.Text == "" {
+			continue
+		}
+		normalized = append(normalized, part)
+	}
+	return normalized
 }
