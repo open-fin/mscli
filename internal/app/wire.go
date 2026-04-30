@@ -212,9 +212,10 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 	managerCfg.CompactProvider = provider
 	ctxManager := agentctx.NewManager(managerCfg)
 
-	// Build system prompt: base + skill summaries. File-backed instructions are
-	// injected into the first user message.
-	systemPrompt := buildEffectiveSystemPromptFromSummaries(skillLoader.List())
+	// Build system prompt: base + skill summaries + auto-memory operating
+	// instructions. Loaded MSCLI.md and MEMORY.md contents are injected into
+	// the first user message.
+	systemPrompt := buildEffectiveSystemPromptFromSummariesWithMemory(skillLoader.List(), memoryCfg)
 
 	var (
 		runtimeSession       *session.Session
@@ -266,7 +267,7 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 					}
 					systemPrompt, restoredMessages := runtimeSession.RestoreContext()
 					if !cfg.Replay {
-						systemPrompt = buildEffectiveSystemPromptFromSummaries(skillLoader.List())
+						systemPrompt = buildEffectiveSystemPromptFromSummariesWithMemory(skillLoader.List(), memoryCfg)
 					}
 					ctxManager.SetSystemPrompt(systemPrompt)
 					ctxManager.SetNonSystemMessages(restoredMessages)
@@ -283,7 +284,7 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 					return nil, fmt.Errorf("load latest session: %w", err)
 				}
 				_, restoredMessages := runtimeSession.RestoreContext()
-				systemPrompt = buildEffectiveSystemPromptFromSummaries(skillLoader.List())
+				systemPrompt = buildEffectiveSystemPromptFromSummariesWithMemory(skillLoader.List(), memoryCfg)
 				ctxManager.SetSystemPrompt(systemPrompt)
 				ctxManager.SetNonSystemMessages(restoredMessages)
 				restoreProviderUsageSnapshot(ctxManager, runtimeSession.UsageSnapshot())

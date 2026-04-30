@@ -237,7 +237,7 @@ func TestRunTaskInjectsMemoryAndMSCLIIntoFirstUserMessage(t *testing.T) {
 		t.Fatalf("write MEMORY.md: %v", err)
 	}
 
-	systemPrompt := buildBaseSystemPrompt(nil)
+	systemPrompt := buildEffectiveSystemPromptFromSummariesWithMemory(nil, memoryCfg)
 	runtimeSession, err := session.Create(workDir, systemPrompt)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
@@ -283,7 +283,15 @@ func TestRunTaskInjectsMemoryAndMSCLIIntoFirstUserMessage(t *testing.T) {
 	if system.Role != "system" {
 		t.Fatalf("first request message role = %q, want system", system.Role)
 	}
-	for _, forbidden := range []string{"# auto memory", "project instructions"} {
+	for _, want := range []string{
+		"# auto memory",
+		"Use read, write, edit, grep, and glob",
+	} {
+		if !strings.Contains(system.Content, want) {
+			t.Fatalf("system prompt missing %q:\n%s", want, system.Content)
+		}
+	}
+	for _, forbidden := range []string{"Remember batch size defaults to 8.", "project instructions"} {
 		if strings.Contains(system.Content, forbidden) {
 			t.Fatalf("system prompt contains %q:\n%s", forbidden, system.Content)
 		}
@@ -295,7 +303,7 @@ func TestRunTaskInjectsMemoryAndMSCLIIntoFirstUserMessage(t *testing.T) {
 	}
 	for _, want := range []string{
 		initialUserContextTag,
-		"# auto memory",
+		"## Auto Memory",
 		"Remember batch size defaults to 8.",
 		"project instructions",
 		"## User Request",
@@ -303,6 +311,15 @@ func TestRunTaskInjectsMemoryAndMSCLIIntoFirstUserMessage(t *testing.T) {
 	} {
 		if !strings.Contains(firstUser.Content, want) {
 			t.Fatalf("first user message missing %q:\n%s", want, firstUser.Content)
+		}
+	}
+	for _, forbidden := range []string{
+		"# auto memory",
+		"Use read, write, edit, grep, and glob",
+		"## Types of memory",
+	} {
+		if strings.Contains(firstUser.Content, forbidden) {
+			t.Fatalf("first user message contains auto-memory instructions %q:\n%s", forbidden, firstUser.Content)
 		}
 	}
 
@@ -318,6 +335,46 @@ func TestRunTaskInjectsMemoryAndMSCLIIntoFirstUserMessage(t *testing.T) {
 	}
 	if got, want := last.Content, "again"; got != want {
 		t.Fatalf("second task user message = %q, want %q", got, want)
+	}
+}
+
+func TestBuildTaskUserMessageDoesNotInjectAfterPlainFirstUserMessage(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	workDir := t.TempDir()
+	memoryDir := filepath.Join(t.TempDir(), "memory")
+	t.Setenv("MSCLI_MEMORY_PATH", memoryDir)
+	memoryCfg, err := resolveAutoMemoryConfig(workDir)
+	if err != nil {
+		t.Fatalf("resolveAutoMemoryConfig() error = %v", err)
+	}
+
+	ctxManager := agentctx.NewManager(agentctx.ManagerConfig{
+		ContextWindow: 200000,
+		ReserveTokens: 20000,
+	})
+	if err := ctxManager.AddMessage(llm.NewUserMessage("plain first request")); err != nil {
+		t.Fatalf("AddMessage(user) error = %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(workDir, "MSCLI.md"), []byte("late project instructions"), 0o644); err != nil {
+		t.Fatalf("write MSCLI.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(memoryDir, memoryIndexFilename), []byte("late memory\n"), 0o644); err != nil {
+		t.Fatalf("write MEMORY.md: %v", err)
+	}
+
+	app := &Application{
+		WorkDir:      workDir,
+		ctxManager:   ctxManager,
+		memoryConfig: memoryCfg,
+	}
+	msg, err := app.buildTaskUserMessage("second request")
+	if err != nil {
+		t.Fatalf("buildTaskUserMessage() error = %v", err)
+	}
+	if got, want := msg, "second request"; got != want {
+		t.Fatalf("second user message = %q, want %q", got, want)
 	}
 }
 

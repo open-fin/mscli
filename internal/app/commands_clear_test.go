@@ -124,8 +124,8 @@ func TestCmdClearRotatesSessionAndLeavesPreviousSnapshotUntouched(t *testing.T) 
 	if !strings.Contains(systemPrompt, "You are MindSpore CLI") {
 		t.Fatalf("new session system prompt missing rebuilt sections: %q", systemPrompt)
 	}
-	if strings.Contains(systemPrompt, "# auto memory") {
-		t.Fatalf("new session system prompt contains memory instructions: %q", systemPrompt)
+	if !strings.Contains(systemPrompt, "# auto memory") {
+		t.Fatalf("new session system prompt missing memory instructions: %q", systemPrompt)
 	}
 	if got := len(restoredMessages); got != 0 {
 		t.Fatalf("new session restored messages after clear = %d, want 0", got)

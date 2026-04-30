@@ -11,7 +11,7 @@ import (
 	"github.com/mindspore-lab/mindspore-cli/ui/model"
 )
 
-func TestBuildInitialUserContextPromptIncludesAutoMemoryPathAndIndex(t *testing.T) {
+func TestBuildPromptsSplitAutoMemoryInstructionsFromLoadedMemory(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -32,15 +32,24 @@ func TestBuildInitialUserContextPromptIncludesAutoMemoryPathAndIndex(t *testing.
 	if err != nil {
 		t.Fatalf("buildEffectiveSystemPrompt() error = %v", err)
 	}
-	if strings.Contains(systemPrompt, "# auto memory") {
-		t.Fatalf("system prompt contains memory instructions:\n%s", systemPrompt)
-	}
-
 	if !memoryCfg.Enabled {
 		t.Fatal("memory config disabled, want enabled")
 	}
 	if got, want := memoryCfg.Dir, memoryDir; got != want {
 		t.Fatalf("memory dir = %q, want %q", got, want)
+	}
+	for _, want := range []string{
+		"# auto memory",
+		memoryDir,
+		"Use read, write, edit, grep, and glob",
+		"## Types of memory",
+	} {
+		if !strings.Contains(systemPrompt, want) {
+			t.Fatalf("system prompt missing %q:\n%s", want, systemPrompt)
+		}
+	}
+	if strings.Contains(systemPrompt, "Remember batch size defaults to 8.") {
+		t.Fatalf("system prompt contains loaded memory content:\n%s", systemPrompt)
 	}
 
 	prompt, err := buildInitialUserContextPrompt(workDir, memoryCfg)
@@ -48,14 +57,21 @@ func TestBuildInitialUserContextPromptIncludesAutoMemoryPathAndIndex(t *testing.
 		t.Fatalf("buildInitialUserContextPrompt() error = %v", err)
 	}
 	for _, want := range []string{
-		"# auto memory",
-		memoryDir,
-		"Use read, write, edit, grep, and glob",
-		"## Types of memory",
+		"## Auto Memory",
+		filepath.Join(memoryDir, memoryIndexFilename),
 		"Remember batch size defaults to 8.",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	for _, forbidden := range []string{
+		"# auto memory",
+		"Use read, write, edit, grep, and glob",
+		"## Types of memory",
+	} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("initial user context contains auto-memory instructions %q:\n%s", forbidden, prompt)
 		}
 	}
 }
@@ -144,15 +160,15 @@ func TestBuildInitialUserContextPromptUsesMemoryPathOverride(t *testing.T) {
 	if got, want := memoryCfg.Dir, overrideDir; got != want {
 		t.Fatalf("memory dir = %q, want override %q", got, want)
 	}
-	if strings.Contains(systemPrompt, overrideDir) {
-		t.Fatalf("system prompt contains override memory dir %q:\n%s", overrideDir, systemPrompt)
+	if !strings.Contains(systemPrompt, overrideDir) {
+		t.Fatalf("system prompt missing override memory dir %q:\n%s", overrideDir, systemPrompt)
 	}
 	contextPrompt, err := buildInitialUserContextPrompt(workDir, memoryCfg)
 	if err != nil {
 		t.Fatalf("buildInitialUserContextPrompt() error = %v", err)
 	}
-	if !strings.Contains(contextPrompt, overrideDir) {
-		t.Fatalf("initial user context missing override dir %q", overrideDir)
+	if strings.TrimSpace(contextPrompt) != "" {
+		t.Fatalf("initial user context = %q, want empty without MEMORY.md or MSCLI.md", contextPrompt)
 	}
 	if _, err := os.Stat(overrideDir); err != nil {
 		t.Fatalf("expected override memory dir created: %v", err)

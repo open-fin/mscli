@@ -422,9 +422,10 @@ func (a *Application) shouldInjectInitialUserContext() bool {
 		return false
 	}
 	for _, msg := range a.ctxManager.GetNonSystemMessages() {
-		if strings.TrimSpace(msg.Role) == "user" && strings.Contains(msg.Content, initialUserContextTag) {
-			return false
+		if strings.TrimSpace(msg.Role) != "user" {
+			continue
 		}
+		return false
 	}
 	return true
 }

@@ -44,18 +44,34 @@ func buildEffectiveSystemPrompt(workDir string, summaries []skills.SkillSummary)
 	if err != nil {
 		return "", autoMemoryConfig{}, err
 	}
-	return buildEffectiveSystemPromptFromSummaries(summaries), memory, nil
+	return buildEffectiveSystemPromptFromSummariesWithMemory(summaries, memory), memory, nil
 }
 
 func buildEffectiveSystemPromptFromSummaries(summaries []skills.SkillSummary) string {
-	return buildBaseSystemPrompt(summaries)
+	return buildEffectiveSystemPromptFromSummariesWithMemory(summaries, autoMemoryConfig{})
+}
+
+func buildEffectiveSystemPromptFromSummariesWithMemory(summaries []skills.SkillSummary, memory autoMemoryConfig) string {
+	prompt := buildBaseSystemPrompt(summaries)
+	if !memory.Enabled {
+		return prompt
+	}
+	memoryPrompt := buildAutoMemoryInstructionsPrompt(memory.Dir)
+	if strings.TrimSpace(memoryPrompt) == "" {
+		return prompt
+	}
+	return prompt + "\n\n" + memoryPrompt
 }
 
 func (a *Application) rebuildSystemPrompt() (string, error) {
 	if a == nil {
 		return "", nil
 	}
-	return buildEffectiveSystemPromptFromSummaries(a.currentSkillSummaries()), nil
+	memory, err := a.activeAutoMemoryConfig()
+	if err != nil {
+		return "", err
+	}
+	return buildEffectiveSystemPromptFromSummariesWithMemory(a.currentSkillSummaries(), memory), nil
 }
 
 func (a *Application) activeAutoMemoryConfig() (autoMemoryConfig, error) {
@@ -106,27 +122,36 @@ func resolveAutoMemoryConfig(workDir string) (autoMemoryConfig, error) {
 	return autoMemoryConfig{Resolved: true, Enabled: true, Dir: memoryDir}, nil
 }
 
-func buildAutoMemoryPrompt(memoryDir string) (string, error) {
+func buildAutoMemoryInstructionsPrompt(memoryDir string) string {
 	memoryDir = strings.TrimSpace(memoryDir)
 	if memoryDir == "" {
-		return "", nil
+		return ""
 	}
 
 	var b strings.Builder
 	writeAutoMemoryInstructions(&b, memoryDir)
+	return strings.TrimRight(b.String(), "\n")
+}
 
+func buildAutoMemoryContextPrompt(memoryDir string) (string, error) {
+	memoryDir = strings.TrimSpace(memoryDir)
+	if memoryDir == "" {
+		return "", nil
+	}
 	indexPath := filepath.Join(memoryDir, memoryIndexFilename)
 	data, err := os.ReadFile(indexPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			b.WriteString("\nCurrent MEMORY.md: not found.")
-			return b.String(), nil
+			return "", nil
 		}
 		return "", fmt.Errorf("read memory index: %w", err)
 	}
 
+	var b strings.Builder
 	content, truncated := truncatePromptContent(string(data), autoMemoryIndexMaxLen)
-	b.WriteString("\nCurrent MEMORY.md")
+	b.WriteString("## Auto Memory\n\n")
+	b.WriteString("The following memory index was loaded from ")
+	b.WriteString(indexPath)
 	if truncated {
 		fmt.Fprintf(&b, " (truncated to %d characters)", autoMemoryIndexMaxLen)
 	}
@@ -143,7 +168,7 @@ func buildInitialUserContextPrompt(workDir string, memory autoMemoryConfig) (str
 	var parts []string
 
 	if memory.Enabled {
-		memoryPrompt, err := buildAutoMemoryPrompt(memory.Dir)
+		memoryPrompt, err := buildAutoMemoryContextPrompt(memory.Dir)
 		if err != nil {
 			return "", err
 		}
