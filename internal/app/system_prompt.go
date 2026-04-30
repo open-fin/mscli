@@ -188,18 +188,18 @@ func buildInitialUserContextPrompt(workDir string, memory autoMemoryConfig) (str
 	return strings.Join(parts, "\n\n"), nil
 }
 
-func buildInitialUserMessage(workDir string, memory autoMemoryConfig, userInput string) (string, error) {
+func buildInitialUserContextMessage(workDir string, memory autoMemoryConfig) (string, error) {
 	contextPrompt, err := buildInitialUserContextPrompt(workDir, memory)
 	if err != nil {
 		return "", err
 	}
-	return injectInitialUserContext(userInput, contextPrompt), nil
+	return injectInitialUserContext(contextPrompt), nil
 }
 
-func injectInitialUserContext(userInput, contextPrompt string) string {
+func injectInitialUserContext(contextPrompt string) string {
 	contextPrompt = strings.TrimSpace(contextPrompt)
-	if contextPrompt == "" || strings.Contains(userInput, initialUserContextTag) {
-		return userInput
+	if contextPrompt == "" {
+		return ""
 	}
 
 	var b strings.Builder
@@ -207,8 +207,6 @@ func injectInitialUserContext(userInput, contextPrompt string) string {
 	b.WriteString("\n\n")
 	b.WriteString("The following context was loaded by MSCLI before the user's first request. Use it as session context and instructions, not as a separate request.\n\n")
 	b.WriteString(contextPrompt)
-	b.WriteString("\n\n## User Request\n\n")
-	b.WriteString(userInput)
 	return b.String()
 }
 
@@ -314,7 +312,7 @@ Saving a memory is a two-step process:
 
 **Step 2** - add a pointer to that file in MEMORY.md. MEMORY.md is an index, not a memory - each entry should be one line, under about 150 characters: - [Title](file.md) - one-line hook. It has no frontmatter. Never write memory content directly into MEMORY.md.
 
-- MEMORY.md is loaded into the first user message and may be truncated, so keep the index concise.
+- MEMORY.md is loaded into the initial session context message and may be truncated, so keep the index concise.
 - Keep the name, description, and type fields in memory files up to date with the content.
 - Organize memory semantically by topic, not chronologically.
 - Update or remove memories that turn out to be wrong or outdated.

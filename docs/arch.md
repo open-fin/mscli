@@ -64,7 +64,7 @@ runTask:
        EngineConfig.SystemPrompt
        + skill summaries (from integrations/skills)
        + auto-memory operating instructions (from internal/app)
-       + first-user-message injection of loaded MEMORY.md and MSCLI.md contents (from internal/app)
+       + separate initial user-role message with loaded MEMORY.md and MSCLI.md contents (from internal/app)
        + any skill content preloaded by /skill
   -> agent/loop.Engine.RunWithContext(task)
   -> tools.Registry
@@ -102,7 +102,7 @@ Free text uses the base system prompt which includes skill summaries
   Loads config, wires dependencies, starts the TUI, handles slash commands,
   dispatches tasks to the engine, converts `loop.Event` to `ui/model.Event`,
   owns auto-memory system-prompt instructions, and injects loaded `MEMORY.md`
-  and `MSCLI.md` contents into the first user message.
+  and `MSCLI.md` contents into a separate initial user-role context message.
 
 - **`agent/loop/`**
   The core runtime. Runs the LLM/tool loop: tool calling, permission checks,

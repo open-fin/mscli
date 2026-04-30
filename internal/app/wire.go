@@ -213,8 +213,8 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 	ctxManager := agentctx.NewManager(managerCfg)
 
 	// Build system prompt: base + skill summaries + auto-memory operating
-	// instructions. Loaded MSCLI.md and MEMORY.md contents are injected into
-	// the first user message.
+	// instructions. Loaded MSCLI.md and MEMORY.md contents are injected into a
+	// separate initial user-role context message.
 	systemPrompt := buildEffectiveSystemPromptFromSummariesWithMemory(skillLoader.List(), memoryCfg)
 
 	var (

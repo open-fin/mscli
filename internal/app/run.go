@@ -315,7 +315,7 @@ func (a *Application) runTaskWithOptions(description string, disableResearchTool
 		Description:          description,
 		DisableResearchTools: disableResearchTools,
 	}
-	userMessage, err := a.buildTaskUserMessage(description)
+	initialMessages, err := a.buildTaskInitialMessages()
 	if err != nil {
 		emit(model.Event{
 			Type:     model.ToolError,
@@ -324,8 +324,9 @@ func (a *Application) runTaskWithOptions(description string, disableResearchTool
 		})
 		return
 	}
-	task.UserMessage = userMessage
-	if a.ctxManager != nil && a.ctxManager.ShouldCompactAfterAdding(llm.NewUserMessage(userMessage)) {
+	task.InitialMessages = initialMessages
+	task.UserMessage = description
+	if a.ctxManager != nil && a.taskWillCompact(initialMessages, description) {
 		emit(model.Event{
 			Type: model.ContextCompactStarted,
 		})
@@ -406,15 +407,22 @@ func (a *Application) emitMaxIterationDecisionPrompt(prefix string) {
 	a.EventCh <- model.Event{Type: model.AgentReply, Message: message}
 }
 
-func (a *Application) buildTaskUserMessage(userInput string) (string, error) {
+func (a *Application) buildTaskInitialMessages() ([]llm.Message, error) {
 	if a == nil || !a.memoryConfig.Resolved || !a.shouldInjectInitialUserContext() {
-		return userInput, nil
+		return nil, nil
 	}
 	memory, err := a.activeAutoMemoryConfig()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return buildInitialUserMessage(a.WorkDir, memory, userInput)
+	content, err := buildInitialUserContextMessage(a.WorkDir, memory)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(content) == "" {
+		return nil, nil
+	}
+	return []llm.Message{llm.NewUserMessage(content)}, nil
 }
 
 func (a *Application) shouldInjectInitialUserContext() bool {
@@ -428,6 +436,18 @@ func (a *Application) shouldInjectInitialUserContext() bool {
 		return false
 	}
 	return true
+}
+
+func (a *Application) taskWillCompact(initialMessages []llm.Message, userInput string) bool {
+	if a == nil || a.ctxManager == nil {
+		return false
+	}
+	for _, msg := range initialMessages {
+		if a.ctxManager.ShouldCompactAfterAdding(msg) {
+			return true
+		}
+	}
+	return a.ctxManager.ShouldCompactAfterAdding(llm.NewUserMessage(userInput))
 }
 
 func (a *Application) beginTaskRun() (context.Context, uint64) {

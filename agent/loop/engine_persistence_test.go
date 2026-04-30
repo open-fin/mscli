@@ -227,6 +227,58 @@ func TestRunPersistsSnapshotBeforeStreamingTaskEvents(t *testing.T) {
 	requireOrder(t, log, "assistant", "snapshot:assistant", "ui:AgentReply")
 }
 
+func TestRunInitialMessagesAreContextOnly(t *testing.T) {
+	provider := &scriptedStreamProvider{
+		responses: []*llm.CompletionResponse{{
+			Content:      "ok",
+			FinishReason: llm.FinishStop,
+		}},
+	}
+	engine := NewEngine(EngineConfig{
+		MaxIterations: 1,
+		ContextWindow: 4096,
+	}, provider, tools.NewRegistry())
+
+	cm := ctxmanager.NewManager(ctxmanager.ManagerConfig{
+		ContextWindow: 4096,
+		ReserveTokens: 512,
+	})
+	cm.SetSystemPrompt("system prompt")
+	engine.SetContextManager(cm)
+
+	var recordedUsers []string
+	engine.SetTrajectoryRecorder(&TrajectoryRecorder{
+		RecordUserInput: func(content string) error {
+			recordedUsers = append(recordedUsers, content)
+			return nil
+		},
+		PersistSnapshot: func() error { return nil },
+	})
+
+	_, err := engine.Run(Task{
+		ID:              "initial-context",
+		Description:     "real request",
+		InitialMessages: []llm.Message{llm.NewUserMessage("loaded context")},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if len(recordedUsers) != 1 || recordedUsers[0] != "real request" {
+		t.Fatalf("recorded user inputs = %#v, want only real request", recordedUsers)
+	}
+	messages := cm.GetNonSystemMessages()
+	if len(messages) < 2 {
+		t.Fatalf("context messages = %d, want initial context and user request", len(messages))
+	}
+	if got, want := messages[0].Content, "loaded context"; got != want {
+		t.Fatalf("initial context message = %q, want %q", got, want)
+	}
+	if got, want := messages[1].Content, "real request"; got != want {
+		t.Fatalf("real user message = %q, want %q", got, want)
+	}
+}
+
 func TestRunPersistsToolResultBeforeToolRender(t *testing.T) {
 	args, err := json.Marshal(map[string]string{"path": "README.md"})
 	if err != nil {

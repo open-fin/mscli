@@ -220,7 +220,7 @@ func TestRunTaskPersistsSessionAfterLiveLLMReply(t *testing.T) {
 	}
 }
 
-func TestRunTaskInjectsMemoryAndMSCLIIntoFirstUserMessage(t *testing.T) {
+func TestRunTaskInjectsMemoryAndMSCLIAsSeparateInitialUserMessage(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	workDir := t.TempDir()
@@ -276,8 +276,8 @@ func TestRunTaskInjectsMemoryAndMSCLIIntoFirstUserMessage(t *testing.T) {
 	if provider.lastReq == nil {
 		t.Fatal("expected provider to receive completion request")
 	}
-	if len(provider.lastReq.Messages) < 2 {
-		t.Fatalf("request messages = %d, want at least system + user", len(provider.lastReq.Messages))
+	if len(provider.lastReq.Messages) < 3 {
+		t.Fatalf("request messages = %d, want at least system + context + user", len(provider.lastReq.Messages))
 	}
 	system := provider.lastReq.Messages[0]
 	if system.Role != "system" {
@@ -297,30 +297,37 @@ func TestRunTaskInjectsMemoryAndMSCLIIntoFirstUserMessage(t *testing.T) {
 		}
 	}
 
-	firstUser := provider.lastReq.Messages[1]
-	if firstUser.Role != "user" {
-		t.Fatalf("second request message role = %q, want user", firstUser.Role)
+	contextUser := provider.lastReq.Messages[1]
+	if contextUser.Role != "user" {
+		t.Fatalf("second request message role = %q, want user", contextUser.Role)
 	}
 	for _, want := range []string{
 		initialUserContextTag,
 		"## Auto Memory",
 		"Remember batch size defaults to 8.",
 		"project instructions",
-		"## User Request",
-		"hello",
 	} {
-		if !strings.Contains(firstUser.Content, want) {
-			t.Fatalf("first user message missing %q:\n%s", want, firstUser.Content)
+		if !strings.Contains(contextUser.Content, want) {
+			t.Fatalf("context user message missing %q:\n%s", want, contextUser.Content)
 		}
 	}
 	for _, forbidden := range []string{
 		"# auto memory",
 		"Use read, write, edit, grep, and glob",
 		"## Types of memory",
+		"## User Request",
+		"hello",
 	} {
-		if strings.Contains(firstUser.Content, forbidden) {
-			t.Fatalf("first user message contains auto-memory instructions %q:\n%s", forbidden, firstUser.Content)
+		if strings.Contains(contextUser.Content, forbidden) {
+			t.Fatalf("context user message contains %q:\n%s", forbidden, contextUser.Content)
 		}
+	}
+	realUser := provider.lastReq.Messages[2]
+	if realUser.Role != "user" {
+		t.Fatalf("third request message role = %q, want user", realUser.Role)
+	}
+	if got, want := realUser.Content, "hello"; got != want {
+		t.Fatalf("real user message = %q, want %q", got, want)
 	}
 
 	app.runTask("again")
@@ -336,9 +343,26 @@ func TestRunTaskInjectsMemoryAndMSCLIIntoFirstUserMessage(t *testing.T) {
 	if got, want := last.Content, "again"; got != want {
 		t.Fatalf("second task user message = %q, want %q", got, want)
 	}
+	reloaded, err := session.LoadByID(workDir, runtimeSession.ID())
+	if err != nil {
+		t.Fatalf("LoadByID() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = reloaded.Close()
+	})
+	replay := reloaded.ReplayEvents()
+	var userInputs []string
+	for _, ev := range replay {
+		if ev.Type == model.UserInput {
+			userInputs = append(userInputs, ev.Message)
+		}
+	}
+	if got, want := userInputs, []string{"hello", "again"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("replay user inputs = %#v, want %#v", got, want)
+	}
 }
 
-func TestBuildTaskUserMessageDoesNotInjectAfterPlainFirstUserMessage(t *testing.T) {
+func TestBuildTaskInitialMessagesDoesNotInjectAfterPlainFirstUserMessage(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	workDir := t.TempDir()
@@ -369,12 +393,12 @@ func TestBuildTaskUserMessageDoesNotInjectAfterPlainFirstUserMessage(t *testing.
 		ctxManager:   ctxManager,
 		memoryConfig: memoryCfg,
 	}
-	msg, err := app.buildTaskUserMessage("second request")
+	msgs, err := app.buildTaskInitialMessages()
 	if err != nil {
-		t.Fatalf("buildTaskUserMessage() error = %v", err)
+		t.Fatalf("buildTaskInitialMessages() error = %v", err)
 	}
-	if got, want := msg, "second request"; got != want {
-		t.Fatalf("second user message = %q, want %q", got, want)
+	if len(msgs) != 0 {
+		t.Fatalf("initial messages = %#v, want none", msgs)
 	}
 }
 

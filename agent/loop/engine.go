@@ -177,6 +177,22 @@ type contextCompactionNotice struct {
 const ContextCompactStartMessage = "compacting conversation..."
 
 func (ex *executor) run(ctx context.Context) ([]Event, error) {
+	for _, msg := range ex.task.InitialMessages {
+		notice, err := ex.addContextMessage(ctx, msg)
+		if err != nil {
+			ex.addEvent(NewEvent(EventTaskFailed, fmt.Sprintf("Persist message error: %v", err)))
+			return ex.events, err
+		}
+		if err := ex.persistSnapshot(); err != nil {
+			ex.addEvent(NewEvent(EventTaskFailed, fmt.Sprintf("Persist snapshot error: %v", err)))
+			return ex.events, err
+		}
+		if err := ex.emitContextCompactionNotice(notice); err != nil {
+			ex.addEvent(NewEvent(EventTaskFailed, err.Error()))
+			return ex.events, err
+		}
+	}
+
 	userMessage := ex.task.userMessageContent()
 	notice, err := ex.addContextMessage(ctx, llm.NewUserMessage(userMessage))
 	if err != nil {

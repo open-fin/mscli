@@ -120,7 +120,7 @@ Package rules:
 - `cmd/mscli/` should call `internal/app` only.
 - `internal/app/` is the wiring layer and should not become a reusable dependency for the rest of the repo.
 - `internal/app/` owns persisted prompt recall wiring and storage. Do not reuse that history for resume or transcript reconstruction.
-- `internal/app/` owns file-backed auto-memory system-prompt instructions and first-user-message injection of loaded memory and `MSCLI.md` contents. There is no `agent/memory` store in the runtime path.
+- `internal/app/` owns file-backed auto-memory system-prompt instructions and injection of loaded memory and `MSCLI.md` contents into a separate initial user-role context message. There is no `agent/memory` store in the runtime path.
 - `internal/app/train.go` maps train lane events to UI state updates — it is the only place that bridges `workflow/train` and `ui/model`.
 - `agent/` must not depend directly on `ui/` or `runtime/`.
 - `agent/` should use tools or interfaces rather than reaching into execution infrastructure directly.
