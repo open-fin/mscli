@@ -172,6 +172,12 @@ func (r *Registry) registerDefaults() {
 	})
 
 	r.Register(Command{
+		Name:        "/init",
+		Description: "Create or improve MSCLI.md for this repository",
+		Usage:       "/init",
+	})
+
+	r.Register(Command{
 		Name:        "/clear",
 		Description: "Start a fresh conversation",
 		Usage:       "/clear",

@@ -31,6 +31,8 @@ func (a *Application) handleCommand(input string) {
 		a.cmdCompact(cmd.Remainder)
 	case "/ctx":
 		a.cmdCtx()
+	case "/init":
+		a.cmdInit()
 	case "/clear":
 		a.cmdClear()
 	case "/branch", "/fork":
