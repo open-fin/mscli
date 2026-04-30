@@ -238,7 +238,11 @@ func (a *Application) reconnectMCPServer(ctx context.Context, workspaceRoot stri
 		return err
 	}
 	unregisterMCPServerTools(a.toolRegistry, server.Name)
-	registerMCPToolDefinitions(a.toolRegistry, manager, normalizeMCPToolDefinitions(server, defs), nil, nil)
+	artifactStore, err := newMCPArtifactStore(workspaceRoot)
+	if err != nil {
+		return err
+	}
+	registerMCPToolDefinitions(a.toolRegistry, manager, normalizeMCPToolDefinitions(server, defs), nil, artifactStore)
 	return nil
 }
 

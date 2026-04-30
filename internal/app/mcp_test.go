@@ -492,6 +492,50 @@ func TestCmdMCPReconnectSuccess(t *testing.T) {
 	}
 }
 
+func TestCmdMCPReconnectRegistersToolsWithArtifactStore(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workDir := t.TempDir()
+	fakeMgr := newFakeMCPManager()
+	fakeMgr.tools["echo"] = []runtimemcp.ToolDefinition{mcpDef("echo", "tool")}
+	fakeMgr.callResult = &runtimemcp.CallResult{
+		Content: []runtimemcp.ContentBlock{{Type: "text", Text: strings.Repeat("x", 70*1024)}},
+	}
+	registry := tools.NewRegistry()
+	app := &Application{EventCh: make(chan model.Event, 8), WorkDir: workDir, mcpManager: fakeMgr, toolRegistry: registry}
+	restore := stubMCPRuntime(t,
+		func(context.Context, runtimemcp.ResolveOptions) (runtimemcp.ResolvedConfig, error) {
+			return runtimemcp.ResolvedConfig{Servers: []runtimemcp.ScopedServer{mcpServer("echo", runtimemcp.ScopeLocal)}}, nil
+		},
+		func(runtimemcp.Config) runtimemcp.Manager { return fakeMgr },
+	)
+	defer restore()
+
+	app.handleCommand("/mcp reconnect echo")
+	<-app.EventCh
+	tool, ok := registry.Get("mcp__echo__tool")
+	if !ok {
+		t.Fatal("registry missing mcp__echo__tool after reconnect")
+	}
+	result, err := tool.Execute(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("execute mcp tool: %v", err)
+	}
+	if strings.Contains(result.Content, "No artifact store is configured") {
+		t.Fatalf("large MCP result did not use artifact store:\n%s", result.Content)
+	}
+	path, ok := result.Meta[tools.MetaArtifactPath].(string)
+	if !ok || path == "" {
+		t.Fatalf("artifact path meta missing: %#v", result.Meta)
+	}
+	if !strings.HasPrefix(path, filepath.Join(home, ".mscli", "projects")) {
+		t.Fatalf("artifact path = %q, want under mscli projects", path)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("artifact file missing: %v", err)
+	}
+}
+
 func TestCmdMCPReconnectReplacesStaleServerTools(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	fakeMgr := newFakeMCPManager()
@@ -824,6 +868,7 @@ type fakeMCPManager struct {
 	closed         bool
 	closedServers  []string
 	closeServerErr map[string]error
+	callResult     *runtimemcp.CallResult
 }
 
 func newFakeMCPManager() *fakeMCPManager {
@@ -848,6 +893,9 @@ func (m *fakeMCPManager) ListTools(ctx context.Context, serverName string) ([]ru
 
 func (m *fakeMCPManager) CallTool(ctx context.Context, serverName, toolName string, args json.RawMessage) (*runtimemcp.CallResult, error) {
 	m.calledServer = serverName
+	if m.callResult != nil {
+		return m.callResult, nil
+	}
 	return &runtimemcp.CallResult{Content: []runtimemcp.ContentBlock{{Type: "text", Text: "ok"}}}, nil
 }
 

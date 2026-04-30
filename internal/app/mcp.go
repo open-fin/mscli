@@ -126,6 +126,18 @@ func initMCPTools(ctx context.Context, registry *tools.Registry, workDir string,
 	return manager, events, nil
 }
 
+func newMCPArtifactStore(workspaceRoot string) (artifacts.Store, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return artifacts.Store{}, fmt.Errorf("resolve home directory: %w", err)
+	}
+	workspaceRoot, err = filepath.Abs(workspaceRoot)
+	if err != nil {
+		return artifacts.Store{}, fmt.Errorf("resolve workspace path: %w", err)
+	}
+	return artifacts.Store{HomeDir: home, WorkspaceRoot: workspaceRoot}, nil
+}
+
 func emitMCPResolveWarnings(events *[]model.Event, resolved runtimemcp.ResolvedConfig) {
 	for _, warning := range resolved.Warnings {
 		emitMCPWarning(events, warning)
