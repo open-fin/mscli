@@ -488,17 +488,17 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 	if !ok {
 		errMsg := fmt.Sprintf("Tool not found: %s", toolName)
 		meta := toolResultMeta(tools.StatusFailed, tools.SourceLoop)
-		notice, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg, meta)
+		write, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg, meta)
 		if err != nil {
 			return err
 		}
 		if err := ex.persistSnapshot(); err != nil {
 			return err
 		}
-		if err := ex.emitContextCompactionNotice(notice); err != nil {
+		if err := ex.emitContextCompactionNotice(write.Notice); err != nil {
 			return err
 		}
-		ex.addToolErrorEvent(toolName, tc.ID, errMsg, meta)
+		ex.addToolErrorEvent(toolName, tc.ID, errMsg, write.Meta)
 		return nil
 	}
 
@@ -513,17 +513,17 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 	if !granted {
 		errMsg := fmt.Sprintf("Permission denied for tool: %s", toolName)
 		meta := toolResultMeta(tools.StatusDeclined, tools.SourcePermission)
-		notice, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg, meta)
+		write, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg, meta)
 		if err != nil {
 			return err
 		}
 		if err := ex.persistSnapshot(); err != nil {
 			return err
 		}
-		if err := ex.emitContextCompactionNotice(notice); err != nil {
+		if err := ex.emitContextCompactionNotice(write.Notice); err != nil {
 			return err
 		}
-		ex.addToolErrorEvent(toolName, tc.ID, errMsg, meta)
+		ex.addToolErrorEvent(toolName, tc.ID, errMsg, write.Meta)
 		return nil
 	}
 
@@ -549,76 +549,80 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 	} else {
 		result, err = tool.Execute(ctx, tc.Function.Arguments)
 	}
-	ex.addReturnedResultMeta(result, time.Since(toolStart))
+	toolDuration := time.Since(toolStart)
+	ex.addReturnedResultMeta(result, toolDuration)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
-			if interruptErr := ex.handleInterruptedToolCall(tc, ""); interruptErr != nil {
+			meta := terminalToolResultMeta(tools.StatusInterrupted, sourceForTool(tool), toolDuration)
+			if interruptErr := ex.handleInterruptedToolCall(tc, "", meta); interruptErr != nil {
 				return interruptErr
 			}
 			return context.Canceled
 		}
 		errMsg := fmt.Sprintf("Tool execution error: %v", err)
-		meta := toolResultMeta(tools.StatusFailed, sourceForTool(tool))
-		notice, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg, meta)
+		meta := terminalToolResultMeta(tools.StatusFailed, sourceForTool(tool), toolDuration)
+		write, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg, meta)
 		if err != nil {
 			return err
 		}
 		if err := ex.persistSnapshot(); err != nil {
 			return err
 		}
-		if err := ex.emitContextCompactionNotice(notice); err != nil {
+		if err := ex.emitContextCompactionNotice(write.Notice); err != nil {
 			return err
 		}
-		ex.addToolErrorEvent(toolName, tc.ID, errMsg, meta)
+		ex.addToolErrorEvent(toolName, tc.ID, errMsg, write.Meta)
 		return nil
 	}
 
 	if result == nil {
 		errMsg := fmt.Sprintf("Tool %s returned no result", toolName)
-		meta := toolResultMeta(tools.StatusFailed, sourceForTool(tool))
-		notice, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg, meta)
+		meta := terminalToolResultMeta(tools.StatusFailed, sourceForTool(tool), toolDuration)
+		write, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg, meta)
 		if err != nil {
 			return err
 		}
 		if err := ex.persistSnapshot(); err != nil {
 			return err
 		}
-		if err := ex.emitContextCompactionNotice(notice); err != nil {
+		if err := ex.emitContextCompactionNotice(write.Notice); err != nil {
 			return err
 		}
-		ex.addToolErrorEvent(toolName, tc.ID, errMsg, meta)
+		ex.addToolErrorEvent(toolName, tc.ID, errMsg, write.Meta)
 		return nil
 	}
 
 	if result.Error != nil {
 		if errors.Is(result.Error, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
-			if interruptErr := ex.handleInterruptedToolCall(tc, result.Content); interruptErr != nil {
+			meta := interruptedToolMeta(result.Meta, sourceForTool(tool), toolDuration)
+			if interruptErr := ex.handleInterruptedToolCall(tc, result.Content, meta); interruptErr != nil {
 				return interruptErr
 			}
 			return context.Canceled
 		}
 		errMsg := result.Error.Error()
-		notice, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg, result.Meta)
+		write, err := ex.addToolResultWithFallback(ctx, tc.ID, errMsg, result.Meta)
 		if err != nil {
 			return err
 		}
 		if err := ex.persistSnapshot(); err != nil {
 			return err
 		}
-		if err := ex.emitContextCompactionNotice(notice); err != nil {
+		if err := ex.emitContextCompactionNotice(write.Notice); err != nil {
 			return err
 		}
-		ex.addToolErrorEvent(toolName, tc.ID, fmt.Sprintf("Tool %s failed: %s", toolName, errMsg), result.Meta)
+		ex.addToolErrorEvent(toolName, tc.ID, fmt.Sprintf("Tool %s failed: %s", toolName, errMsg), write.Meta)
 		return nil
 	}
 	if errors.Is(ctx.Err(), context.Canceled) {
-		if interruptErr := ex.handleInterruptedToolCall(tc, result.Content); interruptErr != nil {
+		meta := interruptedToolMeta(result.Meta, sourceForTool(tool), toolDuration)
+		if interruptErr := ex.handleInterruptedToolCall(tc, result.Content, meta); interruptErr != nil {
 			return interruptErr
 		}
 		return context.Canceled
 	}
 
-	notice, err := ex.addToolResultWithFallback(ctx, tc.ID, result.Content, result.Meta)
+	write, err := ex.addToolResultWithFallback(ctx, tc.ID, result.Content, result.Meta)
 	if err != nil {
 		return err
 	}
@@ -632,10 +636,13 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 	if err := ex.persistSnapshot(); err != nil {
 		return err
 	}
-	if err := ex.emitContextCompactionNotice(notice); err != nil {
+	if err := ex.emitContextCompactionNotice(write.Notice); err != nil {
 		return err
 	}
-	ex.addToolEvent(toolName, tc.ID, result)
+	eventResult := *result
+	eventResult.Content = write.Content
+	eventResult.Meta = write.Meta
+	ex.addToolEvent(toolName, tc.ID, &eventResult)
 	return nil
 }
 
@@ -669,6 +676,25 @@ func toolResultMeta(status, source string) map[string]any {
 	return meta
 }
 
+func terminalToolResultMeta(status, source string, duration time.Duration) map[string]any {
+	meta := toolResultMeta(status, source)
+	meta[tools.MetaDurationMS] = duration.Milliseconds()
+	return meta
+}
+
+func interruptedToolMeta(existing map[string]any, source string, duration time.Duration) map[string]any {
+	meta := cloneToolMeta(existing)
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	meta[tools.MetaStatus] = tools.StatusInterrupted
+	if source != "" {
+		meta[tools.MetaSource] = source
+	}
+	meta[tools.MetaDurationMS] = duration.Milliseconds()
+	return meta
+}
+
 func sourceForTool(tool tools.Tool) string {
 	switch tools.CapabilitiesForTool(tool).Kind {
 	case tools.KindFilesystem:
@@ -684,25 +710,31 @@ func sourceForTool(tool tools.Tool) string {
 	}
 }
 
-func (ex *executor) handleInterruptedToolCall(tc llm.ToolCall, partialOutput string) error {
+func (ex *executor) handleInterruptedToolCall(tc llm.ToolCall, partialOutput string, meta map[string]any) error {
 	content := interruptedToolResultContent(partialOutput)
-	meta := toolResultMeta(tools.StatusInterrupted, tools.SourceLoop)
-	notice, err := ex.addToolResultWithFallback(context.Background(), tc.ID, content, meta)
+	if meta == nil {
+		meta = toolResultMeta(tools.StatusInterrupted, tools.SourceLoop)
+	}
+	write, err := ex.addToolResultWithFallback(context.Background(), tc.ID, content, meta)
 	if err != nil {
 		return err
 	}
 	if err := ex.persistSnapshot(); err != nil {
 		return err
 	}
-	if err := ex.emitContextCompactionNotice(notice); err != nil {
+	if err := ex.emitContextCompactionNotice(write.Notice); err != nil {
 		return err
 	}
 
-	ev := NewEvent(EventToolInterrupted, strings.TrimSpace(partialOutput))
+	eventMessage := strings.TrimSpace(partialOutput)
+	if write.Fallback {
+		eventMessage = write.Content
+	}
+	ev := NewEvent(EventToolInterrupted, eventMessage)
 	ev.ToolName = tc.Function.Name
 	ev.ToolCallID = tc.ID
 	ev.Summary = "interrupted"
-	ev.Meta = meta
+	ev.Meta = write.Meta
 	ex.addEvent(ev)
 	return nil
 }
@@ -877,7 +909,14 @@ func (ex *executor) addToolResult(ctx context.Context, callID, content string, m
 	return notice, nil
 }
 
-func (ex *executor) addToolResultWithFallback(ctx context.Context, callID, content string, meta map[string]any) (*contextCompactionNotice, error) {
+type toolResultWrite struct {
+	Notice   *contextCompactionNotice
+	Content  string
+	Meta     map[string]any
+	Fallback bool
+}
+
+func (ex *executor) addToolResultWithFallback(ctx context.Context, callID, content string, meta map[string]any) (*toolResultWrite, error) {
 	notice, err := ex.addToolResult(ctx, callID, content, meta)
 	if err != nil {
 		fallback := fmt.Sprintf("tool result replaced due to context limit: %v", err)
@@ -893,10 +932,18 @@ func (ex *executor) addToolResultWithFallback(ctx context.Context, callID, conte
 		if err := ex.persistSnapshot(); err != nil {
 			return nil, err
 		}
-		ex.addEvent(NewEvent(EventToolError, fallback))
-		return fallbackNotice, nil
+		return &toolResultWrite{
+			Notice:   fallbackNotice,
+			Content:  fallback,
+			Meta:     fallbackMeta,
+			Fallback: true,
+		}, nil
 	}
-	return notice, nil
+	return &toolResultWrite{
+		Notice:  notice,
+		Content: content,
+		Meta:    cloneToolMeta(meta),
+	}, nil
 }
 
 func cloneToolMeta(meta map[string]any) map[string]any {

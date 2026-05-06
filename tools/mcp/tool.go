@@ -117,6 +117,10 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (*tools.Result,
 			tools.SetResultTruncated(out, true)
 			return out, nil
 		}
+		out := t.withMeta(tools.StringResultWithSummary(content, fmt.Sprintf("mcp %s/%s", t.def.ServerName, t.def.OriginalToolName)), tools.StatusFailed, contentType)
+		out.Error = fmt.Errorf("%s", content)
+		tools.SetResultTruncated(out, true)
+		return out, nil
 	}
 	return t.withMeta(tools.StringResultWithSummary(content, fmt.Sprintf("mcp %s/%s", t.def.ServerName, t.def.OriginalToolName)), tools.StatusCompleted, contentType), nil
 }
@@ -190,7 +194,7 @@ func (t *Tool) persistLargeResultNotice(content string, result *runtimemcp.CallR
 	if err != nil {
 		return fmt.Sprintf("Error: result (%s characters) exceeds maximum allowed tokens. Failed to save output to file: %v. If this MCP server provides pagination or filtering tools, use them to retrieve specific portions of the data.", formatInt(len(content)), err), nil
 	}
-	return fmt.Sprintf("Error: result (%s characters) exceeds maximum allowed tokens. Output has been saved to %s.\nFormat: %s\nIf this MCP server provides pagination or filtering tools, use them to retrieve specific portions of the data.", formatInt(len(content)), artifact.Path, resultFormatDescription(result)), &artifact
+	return fmt.Sprintf("Result (%s characters) exceeds the inline limit. Output has been saved to %s.\nFormat: %s\nIf this MCP server provides pagination or filtering tools, use them to retrieve specific portions of the data.", formatInt(len(content)), artifact.Path, resultFormatDescription(result)), &artifact
 }
 
 func resultFormatDescription(result *runtimemcp.CallResult) string {

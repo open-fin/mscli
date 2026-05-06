@@ -175,8 +175,11 @@ func TestToolPersistsLargeResults(t *testing.T) {
 	if strings.Contains(result.Content, large[:1024]) {
 		t.Fatalf("content includes large inline result")
 	}
-	if !strings.Contains(result.Content, "exceeds maximum allowed tokens") || !strings.Contains(result.Content, "Output has been saved to ") {
+	if !strings.Contains(result.Content, "exceeds the inline limit") || !strings.Contains(result.Content, "Output has been saved to ") {
 		t.Fatalf("content missing persistence notice:\n%s", result.Content)
+	}
+	if strings.HasPrefix(result.Content, "Error:") {
+		t.Fatalf("artifact persistence notice should not look like a failure:\n%s", result.Content)
 	}
 	path := persistedPathFromNotice(t, result.Content)
 	if !strings.HasPrefix(path, filepath.Join(home, ".mscli", "projects")) {
@@ -191,6 +194,9 @@ func TestToolPersistsLargeResults(t *testing.T) {
 	}
 	if got := result.Meta[tools.MetaContentType]; got != tools.ContentTypeText {
 		t.Fatalf("content type = %#v, want text/plain", got)
+	}
+	if got := result.Meta[tools.MetaStatus]; got != tools.StatusCompleted {
+		t.Fatalf("status = %#v, want completed (meta %#v)", got, result.Meta)
 	}
 }
 
@@ -214,16 +220,78 @@ func TestToolPersistsLargeResultsWithArtifactStore(t *testing.T) {
 	if string(store.data) != large {
 		t.Fatalf("stored data len = %d, want %d", len(store.data), len(large))
 	}
+	if strings.HasPrefix(result.Content, "Error:") {
+		t.Fatalf("artifact persistence notice should not look like a failure:\n%s", result.Content)
+	}
 	for key, want := range map[string]any{
 		tools.MetaArtifactPath:         "/tmp/artifact.txt",
 		tools.MetaArtifactRelativePath: "projects/ws/tool-results/artifact.txt",
 		tools.MetaBytes:                int64(len(large)),
 		tools.MetaTruncated:            true,
 		tools.MetaContentType:          tools.ContentTypeText,
+		tools.MetaStatus:               tools.StatusCompleted,
 	} {
 		if got := result.Meta[key]; got != want {
 			t.Fatalf("Meta[%s] = %#v, want %#v (meta %#v)", key, got, want, result.Meta)
 		}
+	}
+}
+
+func TestToolLargeResultWithoutArtifactStoreFailsMetadata(t *testing.T) {
+	large := strings.Repeat("x", maxResultContent+100)
+	tool := NewTool(runtimemcp.ToolDefinition{
+		ServerName:       "server",
+		OriginalToolName: "tool",
+	}, &fakeCaller{result: &runtimemcp.CallResult{
+		Content: []runtimemcp.ContentBlock{{Type: "text", Text: large}},
+	}})
+
+	result, err := tool.Execute(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Execute() err = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("result.Error = nil, want inaccessible large result error")
+	}
+	if !strings.HasPrefix(result.Content, "Error:") {
+		t.Fatalf("missing error notice for inaccessible large result:\n%s", result.Content)
+	}
+	if got := result.Meta[tools.MetaStatus]; got != tools.StatusFailed {
+		t.Fatalf("status = %#v, want failed (meta %#v)", got, result.Meta)
+	}
+	if _, ok := result.Meta[tools.MetaArtifactPath]; ok {
+		t.Fatalf("artifact path should not be set when no artifact is saved: %#v", result.Meta)
+	}
+}
+
+func TestToolLargeResultArtifactWriteFailureFailsMetadata(t *testing.T) {
+	store := &fakeArtifactStore{err: errors.New("disk full")}
+	large := strings.Repeat("x", maxResultContent+100)
+	tool := NewToolWithArtifactStore(runtimemcp.ToolDefinition{
+		ServerName:       "server",
+		OriginalToolName: "tool",
+	}, &fakeCaller{result: &runtimemcp.CallResult{
+		Content: []runtimemcp.ContentBlock{{Type: "text", Text: large}},
+	}}, store)
+
+	result, err := tool.Execute(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Execute() err = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("result.Error = nil, want artifact write error")
+	}
+	if !store.called {
+		t.Fatal("artifact store was not called")
+	}
+	if !strings.HasPrefix(result.Content, "Error:") {
+		t.Fatalf("missing error notice for failed artifact write:\n%s", result.Content)
+	}
+	if got := result.Meta[tools.MetaStatus]; got != tools.StatusFailed {
+		t.Fatalf("status = %#v, want failed (meta %#v)", got, result.Meta)
+	}
+	if _, ok := result.Meta[tools.MetaArtifactPath]; ok {
+		t.Fatalf("artifact path should not be set after write failure: %#v", result.Meta)
 	}
 }
 
@@ -260,11 +328,15 @@ func (f *fakeCaller) CallTool(ctx context.Context, serverName, toolName string, 
 type fakeArtifactStore struct {
 	called bool
 	data   []byte
+	err    error
 }
 
 func (f *fakeArtifactStore) Write(req ArtifactWriteRequest) (Artifact, error) {
 	f.called = true
 	f.data = append([]byte(nil), req.Data...)
+	if f.err != nil {
+		return Artifact{}, f.err
+	}
 	return Artifact{
 		Path:         "/tmp/artifact.txt",
 		RelativePath: "projects/ws/tool-results/artifact.txt",
