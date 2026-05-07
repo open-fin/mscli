@@ -438,6 +438,9 @@ func TestCmdMCPSummaryShowsResolvedStates(t *testing.T) {
 
 	app.handleCommand("/mcp")
 	ev := <-app.EventCh
+	if len(fakeMgr.connected) != 0 {
+		t.Fatalf("/mcp summary connected servers %v, want no reconnects", fakeMgr.connected)
+	}
 	for _, want := range []string{
 		"active [user] stdio - connected, 1 tools",
 		"pending [project] stdio - pending approval",

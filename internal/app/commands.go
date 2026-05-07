@@ -147,7 +147,7 @@ func (a *Application) cmdMCPSummary() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	resolved, workspaceRoot, err := a.resolveMCPForCommand(ctx)
+	resolved, _, err := a.resolveMCPForCommand(ctx)
 	if err != nil {
 		a.emitMCPCommandError("mcp", err)
 		return
@@ -157,24 +157,21 @@ func (a *Application) cmdMCPSummary() {
 		return
 	}
 
-	manager, closeManager := a.mcpCommandManager(workspaceRoot)
-	if closeManager {
-		defer manager.Close(context.Background())
-	}
+	manager := a.mcpManager
 
 	var b strings.Builder
 	b.WriteString("MCP servers:")
 	for _, server := range resolved.Servers {
-		status := "connected"
-		if err := manager.Connect(ctx, server); err != nil {
+		status := "not connected"
+		if manager == nil {
+			b.WriteString(fmt.Sprintf("\n  %s [%s] %s - %s", server.Name, server.Scope, server.Config.TransportType(), status))
+			continue
+		}
+		defs, err := manager.ListTools(ctx, server.Name)
+		if err != nil {
 			status = "failed: " + err.Error()
 		} else {
-			defs, err := manager.ListTools(ctx, server.Name)
-			if err != nil {
-				status = "failed: " + err.Error()
-			} else {
-				status = fmt.Sprintf("connected, %d tools", len(defs))
-			}
+			status = fmt.Sprintf("connected, %d tools", len(defs))
 		}
 		b.WriteString(fmt.Sprintf("\n  %s [%s] %s - %s", server.Name, server.Scope, server.Config.TransportType(), status))
 	}
