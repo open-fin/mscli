@@ -168,6 +168,9 @@ func (a *Application) runReal() error {
 	if history, err := loadInputHistoryForWorkdir(a.WorkDir); err == nil {
 		tui = tui.SeedInputHistory(history)
 	}
+	if input := strings.TrimSpace(a.initialInput); input != "" && !a.replayOnly && a.startupSessionPicker == nil {
+		tui = tui.WithInitialInput(input)
+	}
 	tui = tui.WithInputHistoryAppender(func(text string) {
 		_ = appendInputHistory(a.WorkDir, text)
 	})
@@ -187,7 +190,6 @@ func (a *Application) runReal() error {
 		a.openSessionPicker(a.startupSessionPicker.Mode, a.startupSessionPicker.ReplaySpeed)
 		a.startupSessionPicker = nil
 	}
-	a.submitInitialInput(userCh)
 
 	_, err := p.Run()
 	close(userCh)
@@ -202,21 +204,6 @@ func (a *Application) inputLoop(userCh <-chan string) {
 	for input := range userCh {
 		a.processInput(input)
 	}
-}
-
-func (a *Application) submitInitialInput(userCh chan<- string) {
-	if a == nil || userCh == nil {
-		return
-	}
-	input := strings.TrimSpace(a.initialInput)
-	if input == "" || a.replayOnly || a.startupSessionPicker != nil {
-		return
-	}
-	a.initialInput = ""
-	_ = appendInputHistory(a.WorkDir, input)
-	go func() {
-		userCh <- input
-	}()
 }
 
 func (a *Application) processInput(input string) {

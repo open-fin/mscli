@@ -57,6 +57,35 @@ func TestBannerPrintsAtBootDoneWhenNoPopup(t *testing.T) {
 	}
 }
 
+func TestInitialInputSubmitsAfterBootAndShowsUserMessage(t *testing.T) {
+	userCh := make(chan string, 1)
+	app := New(nil, userCh, "test", ".", "", "demo-model", 4096).WithInitialInput("first command")
+
+	next, cmd := app.Update(bootDoneMsg{})
+	app = next.(App)
+
+	if cmd == nil {
+		t.Fatal("expected banner and initial input print command")
+	}
+	if len(app.state.Messages) != 1 {
+		t.Fatalf("message count = %d, want 1", len(app.state.Messages))
+	}
+	if got := app.state.Messages[0].Content; got != "first command" {
+		t.Fatalf("first message = %q, want %q", got, "first command")
+	}
+	if got := app.suppressUserEventPrints; got != 1 {
+		t.Fatalf("suppressUserEventPrints = %d, want 1", got)
+	}
+	select {
+	case got := <-userCh:
+		if got != "first command" {
+			t.Fatalf("submitted input = %q, want %q", got, "first command")
+		}
+	default:
+		t.Fatal("expected initial input to be sent to backend")
+	}
+}
+
 func TestBannerDeferredWhenSetupPopupActive(t *testing.T) {
 	// First boot: setup popup opens during boot → banner deferred until popup closes.
 	app := New(nil, nil, "test", ".", "", "demo-model", 4096)
