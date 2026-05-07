@@ -147,3 +147,9 @@ The tool result metadata includes:
 
 MCP result metadata also includes `source=mcp`, the MCP `server`, the original
 MCP `tool`, and terminal `status`.
+
+When an artifact is saved successfully, the terminal status remains
+`completed`; `truncated=true` plus `artifact_path` indicates that the inline
+tool output is only a notice. If the full result cannot be saved because no
+artifact store is available or the artifact write fails, the result is marked
+`failed` because the complete output is not accessible.
