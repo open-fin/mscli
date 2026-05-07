@@ -13,6 +13,10 @@ import (
 )
 
 func (a *Application) runHeadlessIssueCommand(command, rawInput string, out io.Writer) error {
+	return a.runHeadlessCommand(command, rawInput, out)
+}
+
+func (a *Application) runHeadlessCommand(command, rawInput string, out io.Writer) error {
 	if a == nil {
 		return nil
 	}
@@ -32,11 +36,52 @@ func (a *Application) runHeadlessIssueCommand(command, rawInput string, out io.W
 		return fmt.Errorf("yolo mode not available in current configuration")
 	}
 
-	task, err := a.headlessIssueTask(command, rawInput)
+	task, err := a.headlessTask(command, rawInput)
 	if err != nil {
 		return err
 	}
-	return a.runTaskHeadless(task, out)
+	if err := a.runTaskHeadless(task, out); err != nil {
+		return err
+	}
+	a.printHeadlessResumeHint(out)
+	return nil
+}
+
+func (a *Application) headlessTask(command, rawInput string) (string, error) {
+	if command == "exec" {
+		return a.headlessExecTask(rawInput)
+	}
+	return a.headlessIssueTask(command, rawInput)
+}
+
+func (a *Application) headlessExecTask(rawInput string) (string, error) {
+	expanded, err := a.expandInputText(strings.TrimSpace(rawInput))
+	if err != nil {
+		return "", fmt.Errorf("expand input: %w", err)
+	}
+	expanded = strings.TrimSpace(expanded)
+	if expanded == "" {
+		return "", fmt.Errorf("usage: mscli exec [flags] <task>")
+	}
+	return expanded, nil
+}
+
+func (a *Application) printHeadlessResumeHint(out io.Writer) {
+	if out == nil {
+		return
+	}
+	hint := a.headlessResumeHint()
+	if hint == "" {
+		return
+	}
+	_, _ = fmt.Fprintln(out, hint)
+}
+
+func (a *Application) headlessResumeHint() string {
+	if a == nil || a.session == nil {
+		return ""
+	}
+	return cliResumeHintForSession(a.session.ID())
 }
 
 func (a *Application) headlessIssueTask(command, rawInput string) (string, error) {

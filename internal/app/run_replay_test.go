@@ -307,6 +307,22 @@ func TestParseBootstrapConfigHeadlessFix(t *testing.T) {
 	}
 }
 
+func TestParseBootstrapConfigHeadlessExec(t *testing.T) {
+	cfg, err := parseBootstrapConfig([]string{"exec", "--debug", "inspect", "workspace"})
+	if err != nil {
+		t.Fatalf("parse headless exec config: %v", err)
+	}
+	if cfg.HeadlessCommand != "exec" {
+		t.Fatalf("headless command = %q, want exec", cfg.HeadlessCommand)
+	}
+	if !cfg.Debug {
+		t.Fatal("expected debug mode to be enabled")
+	}
+	if cfg.InitialInput != "inspect workspace" {
+		t.Fatalf("initial input = %q, want %q", cfg.InitialInput, "inspect workspace")
+	}
+}
+
 func TestParseBootstrapConfigHeadlessDiagnoseRequiresInput(t *testing.T) {
 	_, err := parseBootstrapConfig([]string{"diagnose"})
 	if err == nil {
@@ -314,6 +330,16 @@ func TestParseBootstrapConfigHeadlessDiagnoseRequiresInput(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "usage: mscli diagnose") {
 		t.Fatalf("diagnose usage error = %q", err.Error())
+	}
+}
+
+func TestParseBootstrapConfigHeadlessExecRequiresInput(t *testing.T) {
+	_, err := parseBootstrapConfig([]string{"exec"})
+	if err == nil {
+		t.Fatal("parse headless exec error = nil, want usage error")
+	}
+	if !strings.Contains(err.Error(), "usage: mscli exec [flags] <task>") {
+		t.Fatalf("exec usage error = %q", err.Error())
 	}
 }
 

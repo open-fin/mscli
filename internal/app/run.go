@@ -47,6 +47,7 @@ const (
 	bootstrapHelpTopicFactory  bootstrapHelpTopic = "factory"
 	bootstrapHelpTopicFix      bootstrapHelpTopic = "fix"
 	bootstrapHelpTopicDiagnose bootstrapHelpTopic = "diagnose"
+	bootstrapHelpTopicExec     bootstrapHelpTopic = "exec"
 )
 
 type bootstrapHelpError struct {
@@ -112,7 +113,7 @@ func Run(args []string) error {
 		return err
 	}
 	if cfg.HeadlessCommand != "" {
-		return app.runHeadlessIssueCommand(cfg.HeadlessCommand, cfg.InitialInput, cliStdout)
+		return app.runHeadlessCommand(cfg.HeadlessCommand, cfg.InitialInput, cliStdout)
 	}
 
 	return app.run()
@@ -889,7 +890,7 @@ func parseBootstrapConfig(args []string) (BootstrapConfig, error) {
 
 func isHeadlessBootstrapCommand(command string) bool {
 	switch command {
-	case "fix", "diagnose":
+	case "fix", "diagnose", "exec":
 		return true
 	default:
 		return false
@@ -907,7 +908,7 @@ func parseHeadlessBootstrapConfig(command string, args []string) (BootstrapConfi
 	}
 	initialInput := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	if initialInput == "" {
-		return BootstrapConfig{}, fmt.Errorf("usage: mscli %s [flags] <problem text|ISSUE-id>", command)
+		return BootstrapConfig{}, fmt.Errorf("usage: mscli %s [flags] %s", command, headlessUsageArg(command))
 	}
 	return BootstrapConfig{
 		URL:             *url,
@@ -925,6 +926,8 @@ func bootstrapHelpTopicForCommand(command string) bootstrapHelpTopic {
 		return bootstrapHelpTopicFix
 	case "diagnose":
 		return bootstrapHelpTopicDiagnose
+	case "exec":
+		return bootstrapHelpTopicExec
 	default:
 		return bootstrapHelpTopicRoot
 	}
@@ -999,6 +1002,8 @@ Examples:
 		return renderHeadlessBootstrapHelp("fix")
 	case bootstrapHelpTopicDiagnose:
 		return renderHeadlessBootstrapHelp("diagnose")
+	case bootstrapHelpTopicExec:
+		return renderHeadlessBootstrapHelp("exec")
 	case bootstrapHelpTopicReplay:
 		return `Replay a saved session or recorded trajectory, then keep chatting.
 
@@ -1036,6 +1041,7 @@ Commands:
   factory   Run non-interactive Factory commands for external agents, shell scripts, and CI
   fix       Run /fix headlessly with YOLO enabled and print stdout
   diagnose  Run /diagnose headlessly with YOLO enabled and print stdout
+  exec      Run a free-form task headlessly with YOLO enabled and print stdout
 
 Flags:
   --url string
@@ -1058,6 +1064,7 @@ In-app commands:
 Examples:
   mscli
   mscli "why does this MindSpore run fail?"
+  mscli exec "inspect this repository"
   mscli fix "fix the training failure in ./train.py"
   mscli diagnose ISSUE-42
   MSCLI_PROVIDER=openai-completion MSCLI_API_KEY=sk-... MSCLI_MODEL=gpt-4o mscli
@@ -1081,14 +1088,26 @@ Environment:
 }
 
 func renderHeadlessBootstrapHelp(command string) string {
-	return fmt.Sprintf(`Run /%s without opening the TUI. YOLO mode is enabled for the run, agent output is printed to stdout, and the process exits when the agent returns.
+	description := fmt.Sprintf("Run /%s without opening the TUI.", command)
+	usageArg := headlessUsageArg(command)
+	argumentLabel := "problem text|ISSUE-id"
+	argument := "Free-form request text or an issue ID such as ISSUE-42."
+	examples := fmt.Sprintf(`  mscli %s "fix the failing MindSpore training script"
+  mscli %s ISSUE-42`, command, command)
+	if command == "exec" {
+		description = "Run a free-form task without opening the TUI."
+		argumentLabel = "task"
+		argument = "Free-form request text."
+		examples = `  mscli exec "inspect this repository"`
+	}
+	return fmt.Sprintf(`%s YOLO mode is enabled for the run, agent output is printed to stdout, and the process exits when the agent returns.
 
 Usage:
-  mscli %s [flags] <problem text|ISSUE-id>
+  mscli %s [flags] %s
 
 Arguments:
-  problem text|ISSUE-id
-        Free-form request text or an issue ID such as ISSUE-42.
+  %s
+        %s
 
 Flags:
   --url string
@@ -1103,9 +1122,15 @@ Flags:
         Show help for %s
 
 Examples:
-  mscli %s "fix the failing MindSpore training script"
-  mscli %s ISSUE-42
-`, command, command, bootstrapFlagDescURL, bootstrapFlagDescModel, bootstrapFlagDescAPIKey, bootstrapFlagDescDebug, command, command, command)
+%s
+`, description, command, usageArg, argumentLabel, argument, bootstrapFlagDescURL, bootstrapFlagDescModel, bootstrapFlagDescAPIKey, bootstrapFlagDescDebug, command, examples)
+}
+
+func headlessUsageArg(command string) string {
+	if command == "exec" {
+		return "<task>"
+	}
+	return "<problem text|ISSUE-id>"
 }
 
 func parseReplaySpeed(raw string) (float64, bool) {

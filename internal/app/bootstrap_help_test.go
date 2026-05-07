@@ -15,9 +15,11 @@ func TestRenderBootstrapHelpRoot(t *testing.T) {
 		"Commands:\n  resume    Resume a saved session; opens the session picker UI by default\n  replay    Replay a saved session or trajectory; opens the session picker UI by default\n  factory   Run non-interactive Factory commands for external agents, shell scripts, and CI",
 		"fix       Run /fix headlessly with YOLO enabled and print stdout",
 		"diagnose  Run /diagnose headlessly with YOLO enabled and print stdout",
+		"exec      Run a free-form task headlessly with YOLO enabled and print stdout",
 		"-v, --version",
 		"type / to browse slash commands",
 		"mscli \"why does this MindSpore run fail?\"",
+		"mscli exec \"inspect this repository\"",
 		"mscli fix \"fix the training failure in ./train.py\"",
 		"MSCLI_PROVIDER=openai-completion MSCLI_API_KEY=sk-... MSCLI_MODEL=gpt-4o mscli",
 		"mscli replay trajectory.json 2x",
@@ -94,6 +96,21 @@ func TestRenderBootstrapHelpHeadless(t *testing.T) {
 	}
 }
 
+func TestRenderBootstrapHelpHeadlessExec(t *testing.T) {
+	got := renderBootstrapHelp(bootstrapHelpTopicExec)
+
+	for _, want := range []string{
+		"Run a free-form task without opening the TUI.",
+		"Usage:\n  mscli exec [flags] <task>",
+		"YOLO mode is enabled",
+		"mscli exec \"inspect this repository\"",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("exec help should contain %q, got:\n%s", want, got)
+		}
+	}
+}
+
 func TestParseBootstrapConfigHelpTopics(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -105,6 +122,7 @@ func TestParseBootstrapConfigHelpTopics(t *testing.T) {
 		{name: "replay", args: []string{"replay", "--help"}, topic: bootstrapHelpTopicReplay},
 		{name: "fix", args: []string{"fix", "--help"}, topic: bootstrapHelpTopicFix},
 		{name: "diagnose", args: []string{"diagnose", "--help"}, topic: bootstrapHelpTopicDiagnose},
+		{name: "exec", args: []string{"exec", "--help"}, topic: bootstrapHelpTopicExec},
 	}
 
 	for _, tt := range tests {
@@ -137,6 +155,7 @@ func TestRunHelpReturnsNil(t *testing.T) {
 		{name: "factory", args: []string{"factory", "--help"}, want: "Factory commands:"},
 		{name: "fix", args: []string{"fix", "--help"}, want: "Usage:\n  mscli fix [flags] <problem text|ISSUE-id>"},
 		{name: "diagnose", args: []string{"diagnose", "--help"}, want: "Usage:\n  mscli diagnose [flags] <problem text|ISSUE-id>"},
+		{name: "exec", args: []string{"exec", "--help"}, want: "Usage:\n  mscli exec [flags] <task>"},
 	}
 
 	for _, tt := range tests {
