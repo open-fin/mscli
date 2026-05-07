@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -271,6 +272,48 @@ func TestParseBootstrapConfigDebug(t *testing.T) {
 	}
 	if !cfg.Debug {
 		t.Fatal("expected debug mode to be enabled")
+	}
+}
+
+func TestParseBootstrapConfigInitialInput(t *testing.T) {
+	cfg, err := parseBootstrapConfig([]string{"--debug", "inspect", "this", "failure"})
+	if err != nil {
+		t.Fatalf("parse initial input config: %v", err)
+	}
+	if !cfg.Debug {
+		t.Fatal("expected debug mode to be enabled")
+	}
+	if cfg.InitialInput != "inspect this failure" {
+		t.Fatalf("initial input = %q, want %q", cfg.InitialInput, "inspect this failure")
+	}
+	if cfg.HeadlessCommand != "" {
+		t.Fatalf("headless command = %q, want empty", cfg.HeadlessCommand)
+	}
+}
+
+func TestParseBootstrapConfigHeadlessFix(t *testing.T) {
+	cfg, err := parseBootstrapConfig([]string{"fix", "--model", "gpt-test", "repair", "train.py"})
+	if err != nil {
+		t.Fatalf("parse headless fix config: %v", err)
+	}
+	if cfg.HeadlessCommand != "fix" {
+		t.Fatalf("headless command = %q, want fix", cfg.HeadlessCommand)
+	}
+	if cfg.Model != "gpt-test" {
+		t.Fatalf("model = %q, want gpt-test", cfg.Model)
+	}
+	if cfg.InitialInput != "repair train.py" {
+		t.Fatalf("initial input = %q, want %q", cfg.InitialInput, "repair train.py")
+	}
+}
+
+func TestParseBootstrapConfigHeadlessDiagnoseRequiresInput(t *testing.T) {
+	_, err := parseBootstrapConfig([]string{"diagnose"})
+	if err == nil {
+		t.Fatal("parse headless diagnose error = nil, want usage error")
+	}
+	if !strings.Contains(err.Error(), "usage: mscli diagnose") {
+		t.Fatalf("diagnose usage error = %q", err.Error())
 	}
 }
 

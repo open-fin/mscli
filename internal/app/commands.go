@@ -1175,27 +1175,41 @@ func (a *Application) cmdYolo() {
 
 	current := permSvc.Check("shell", "")
 	if current == permission.PermissionAllowAlways {
-		permSvc.Grant("shell", permission.PermissionAsk)
-		permSvc.Grant("write", permission.PermissionAsk)
-		permSvc.Grant("edit", permission.PermissionAsk)
-		permSvc.Grant("load_skill", permission.PermissionAsk)
+		a.disableYoloMode(permSvc)
 		a.EventCh <- model.Event{
 			Type:    model.AgentReply,
 			Message: "YOLO mode disabled. Will ask for confirmation on destructive operations.",
 		}
-	} else {
-		permSvc.Grant("shell", permission.PermissionAllowAlways)
-		permSvc.Grant("write", permission.PermissionAllowAlways)
-		permSvc.Grant("edit", permission.PermissionAllowAlways)
-		permSvc.Grant("read", permission.PermissionAllowAlways)
-		permSvc.Grant("grep", permission.PermissionAllowAlways)
-		permSvc.Grant("glob", permission.PermissionAllowAlways)
-		permSvc.Grant("load_skill", permission.PermissionAllowAlways)
-		a.EventCh <- model.Event{
-			Type:    model.AgentReply,
-			Message: "YOLO mode enabled! All operations will be auto-approved. Use with caution!",
-		}
+		return
 	}
+
+	a.enableYoloMode()
+	a.EventCh <- model.Event{
+		Type:    model.AgentReply,
+		Message: "YOLO mode enabled! All operations will be auto-approved. Use with caution!",
+	}
+}
+
+func (a *Application) enableYoloMode() bool {
+	permSvc, ok := a.permService.(*permission.DefaultPermissionService)
+	if !ok {
+		return false
+	}
+	permSvc.Grant("shell", permission.PermissionAllowAlways)
+	permSvc.Grant("write", permission.PermissionAllowAlways)
+	permSvc.Grant("edit", permission.PermissionAllowAlways)
+	permSvc.Grant("read", permission.PermissionAllowAlways)
+	permSvc.Grant("grep", permission.PermissionAllowAlways)
+	permSvc.Grant("glob", permission.PermissionAllowAlways)
+	permSvc.Grant("load_skill", permission.PermissionAllowAlways)
+	return true
+}
+
+func (a *Application) disableYoloMode(permSvc *permission.DefaultPermissionService) {
+	permSvc.Grant("shell", permission.PermissionAsk)
+	permSvc.Grant("write", permission.PermissionAsk)
+	permSvc.Grant("edit", permission.PermissionAsk)
+	permSvc.Grant("load_skill", permission.PermissionAsk)
 }
 
 func (a *Application) cmdSkill(args []string) {

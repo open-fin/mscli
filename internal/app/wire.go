@@ -68,6 +68,7 @@ type Application struct {
 	replaySpeed             float64
 	sessionLLMActivity      atomic.Bool
 	sessionStoreReady       atomic.Bool
+	initialInput            string
 
 	// Skills
 	skillLoader   *skills.Loader
@@ -111,6 +112,8 @@ type BootstrapConfig struct {
 	Model               string
 	Key                 string
 	Debug               bool
+	InitialInput        string
+	HeadlessCommand     string
 	Resume              bool
 	ResumeSessionID     string
 	Replay              bool
@@ -382,6 +385,7 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 		deferHistoryReplay:      cfg.Resume && !cfg.Replay && startupSessionPicker == nil,
 		replayOnly:              cfg.Replay && startupSessionPicker == nil,
 		replaySpeed:             replaySpeedOrDefault(cfg.ReplaySpeed),
+		initialInput:            strings.TrimSpace(cfg.InitialInput),
 		llmReady:                llmReady,
 		skillLoader:             skillLoader,
 		skillsHomeDir:           strings.TrimSpace(homeDir),
