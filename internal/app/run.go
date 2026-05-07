@@ -740,7 +740,7 @@ func (a *Application) exitResumeHint() string {
 	if a == nil || a.replayOnly || a.session == nil {
 		return ""
 	}
-	if !a.sessionLLMActivity.Load() {
+	if !a.sessionLLMActivity.Load() && !a.resumeHintOnExit.Load() {
 		return ""
 	}
 	return cliResumeHintForSession(a.session.ID())

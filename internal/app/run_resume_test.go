@@ -53,6 +53,26 @@ func TestExitResumeHintShowsSessionIDAfterLiveLLMActivity(t *testing.T) {
 	}
 }
 
+func TestExitResumeHintShowsSessionIDAfterResumeWithoutLiveLLMActivity(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	runtimeSession, err := session.Create(t.TempDir(), "system prompt")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = runtimeSession.Close()
+	})
+
+	app := &Application{session: runtimeSession}
+	app.resumeHintOnExit.Store(true)
+
+	got := app.exitResumeHint()
+	if !strings.Contains(got, "mscli resume "+runtimeSession.ID()) {
+		t.Fatalf("expected resume hint with session id, got %q", got)
+	}
+}
+
 func TestExitResumeHintSkippedForReplay(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
@@ -65,6 +85,7 @@ func TestExitResumeHintSkippedForReplay(t *testing.T) {
 	})
 
 	app := &Application{session: runtimeSession, replayOnly: true}
+	app.resumeHintOnExit.Store(true)
 	if err := app.noteLiveLLMActivity(); err != nil {
 		t.Fatalf("note live llm activity: %v", err)
 	}

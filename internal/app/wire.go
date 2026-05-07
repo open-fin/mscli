@@ -67,6 +67,7 @@ type Application struct {
 	replayOnly              bool
 	replaySpeed             float64
 	sessionLLMActivity      atomic.Bool
+	resumeHintOnExit        atomic.Bool
 	sessionStoreReady       atomic.Bool
 	initialInput            string
 
@@ -392,6 +393,7 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 		needsSetupPopup:         needsSetupPopup,
 		startupSessionPicker:    startupSessionPicker,
 	}
+	app.resumeHintOnExit.Store(cfg.Resume && startupSessionPicker == nil)
 	permissionUI.SetYOLOCallbacks(
 		func() bool {
 			if svc, ok := app.permService.(*permission.DefaultPermissionService); ok {
@@ -565,6 +567,7 @@ func (a *Application) rotateSession() error {
 	previous := a.session
 	a.session = nextSession
 	a.sessionLLMActivity.Store(false)
+	a.resumeHintOnExit.Store(false)
 	a.sessionStoreReady.Store(false)
 	if a.ctxManager != nil {
 		a.ctxManager.SetSystemPrompt(systemPrompt)

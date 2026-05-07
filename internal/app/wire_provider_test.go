@@ -278,6 +278,9 @@ func TestWireResumeAcceptsLegacyLoadSkillSessionPermissions(t *testing.T) {
 	if !app.sessionStoreReady.Load() {
 		t.Fatal("expected session permission store to be ready")
 	}
+	if !app.resumeHintOnExit.Load() {
+		t.Fatal("expected resumeHintOnExit after bootstrap resume")
+	}
 }
 
 func providerResolveNoOverrides() llm.ResolveOptions {

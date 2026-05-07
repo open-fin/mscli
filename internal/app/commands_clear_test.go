@@ -64,6 +64,7 @@ func TestCmdClearRotatesSessionAndLeavesPreviousSnapshotUntouched(t *testing.T) 
 	app.ctxManager = ctxManager
 	app.permService = permSvc
 	app.sessionLLMActivity.Store(true)
+	app.resumeHintOnExit.Store(true)
 	app.sessionStoreReady.Store(true)
 	oldSessionID := runtimeSession.ID()
 
@@ -85,6 +86,9 @@ func TestCmdClearRotatesSessionAndLeavesPreviousSnapshotUntouched(t *testing.T) 
 	}
 	if got := app.sessionLLMActivity.Load(); got {
 		t.Fatal("sessionLLMActivity should reset after clear")
+	}
+	if got := app.resumeHintOnExit.Load(); got {
+		t.Fatal("resumeHintOnExit should reset after clear")
 	}
 	if got := app.sessionStoreReady.Load(); got {
 		t.Fatal("sessionStoreReady should reset after clear")
