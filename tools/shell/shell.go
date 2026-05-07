@@ -126,20 +126,23 @@ func (t *ShellTool) ExecuteStream(ctx context.Context, params json.RawMessage, e
 		if errors.Is(ctx.Err(), context.Canceled) {
 			result := tools.StringResultWithSummary("", "interrupted")
 			tools.SetResultSource(result, tools.SourceShell)
+			tools.SetResultStatus(result, tools.StatusInterrupted)
 			return result, nil
 		}
 		result := tools.ErrorResultf("execute command: %w", err)
 		tools.SetResultSource(result, tools.SourceShell)
+		tools.SetResultStatus(result, tools.StatusFailed)
 		return result, nil
 	}
 
 	output, hasOutput := shellOutput(result)
-	if errors.Is(ctx.Err(), context.Canceled) {
+	if ctx.Err() != nil {
 		if !hasOutput {
 			output = ""
 		}
 		out := tools.StringResultWithSummary(output, "interrupted")
 		addShellResultMeta(out, result)
+		tools.SetResultStatus(out, tools.StatusInterrupted)
 		return out, nil
 	}
 	if !hasOutput {
@@ -179,6 +182,11 @@ func addShellResultMeta(out *tools.Result, result *rshell.Result) {
 	}
 	tools.SetResultExitCode(out, result.ExitCode)
 	tools.SetResultTruncated(out, result.StdoutTruncated || result.StderrTruncated)
+	status := tools.StatusCompleted
+	if result.ExitCode != 0 || result.Error != nil {
+		status = tools.StatusFailed
+	}
+	tools.SetResultStatus(out, status)
 }
 
 func shellOutput(result *rshell.Result) (string, bool) {

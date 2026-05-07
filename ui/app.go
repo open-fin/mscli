@@ -9,11 +9,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
 	"gitcode.com/mindspore/mscli/ui/components"
 	"gitcode.com/mindspore/mscli/ui/model"
 	"gitcode.com/mindspore/mscli/ui/panels"
 	"gitcode.com/mindspore/mscli/ui/theme"
+	"github.com/charmbracelet/lipgloss"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -1440,8 +1440,14 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 		stats.Errors++
 		a.state = a.state.WithStats(stats)
 		a.state = a.resolveToolEvent(ev, model.Message{
-			Kind: model.MsgTool, ToolName: displayToolName(ev.ToolName), ToolArgs: ev.Message,
-			Display: model.DisplayError, Content: ev.Message,
+			Kind:       model.MsgTool,
+			ToolName:   displayToolName(ev.ToolName),
+			ToolCallID: ev.ToolCallID,
+			ToolArgs:   ev.Message,
+			Display:    model.DisplayError,
+			Content:    ev.Message,
+			Summary:    ev.Summary,
+			Meta:       ev.Meta,
 		})
 
 	case model.ToolReplay:
@@ -2959,6 +2965,8 @@ func replayToolMessage(ev model.Event) model.Message {
 		ToolCallID: ev.ToolCallID,
 		Display:    display,
 		Content:    content,
+		Summary:    ev.Summary,
+		Meta:       ev.Meta,
 	}
 }
 
