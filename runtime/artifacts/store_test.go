@@ -39,6 +39,27 @@ func TestStoreWriteScopesArtifactsByWorkspaceAndSanitizesName(t *testing.T) {
 	}
 }
 
+func TestStoreWriteUsesJSONExtensionForJSONArtifacts(t *testing.T) {
+	home := t.TempDir()
+	store := Store{HomeDir: home, WorkspaceRoot: t.TempDir()}
+
+	artifact, err := store.Write(WriteRequest{
+		Prefix:      "mcp",
+		Name:        "structured",
+		ContentType: "application/json",
+		Data:        []byte(`{"ok":true}`),
+	})
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+	if got := filepath.Ext(artifact.Path); got != ".json" {
+		t.Fatalf("artifact extension = %q, want .json (path %q)", got, artifact.Path)
+	}
+	if got := filepath.Ext(artifact.RelativePath); got != ".json" {
+		t.Fatalf("relative artifact extension = %q, want .json (relative path %q)", got, artifact.RelativePath)
+	}
+}
+
 func TestWorkspaceKeyPreservesCurrentMCPAlgorithm(t *testing.T) {
 	got := WorkspaceKey(filepath.Join(string(filepath.Separator), "tmp", "a:b", "workspace"))
 	if strings.Contains(got, string(filepath.Separator)) || strings.Contains(got, ":") {

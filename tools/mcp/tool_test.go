@@ -237,6 +237,37 @@ func TestToolPersistsLargeResultsWithArtifactStore(t *testing.T) {
 	}
 }
 
+func TestToolPersistsLargeStructuredOnlyResultsAsJSONArtifact(t *testing.T) {
+	store := &fakeArtifactStore{}
+	large := strings.Repeat("x", maxResultContent+100)
+	tool := NewToolWithArtifactStore(runtimemcp.ToolDefinition{
+		ServerName:       "server",
+		OriginalToolName: "tool",
+	}, &fakeCaller{result: &runtimemcp.CallResult{
+		StructuredContent: map[string]any{"payload": large},
+	}}, store)
+
+	result, err := tool.Execute(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Execute() err = %v", err)
+	}
+	if !store.called {
+		t.Fatal("artifact store was not called")
+	}
+	if got := store.contentType; got != tools.ContentTypeJSON {
+		t.Fatalf("stored content type = %q, want %q", got, tools.ContentTypeJSON)
+	}
+	if !json.Valid(store.data) {
+		t.Fatalf("stored structured artifact is not valid JSON:\n%s", string(store.data[:128]))
+	}
+	if strings.Contains(string(store.data), "Structured content:") {
+		t.Fatalf("stored JSON artifact includes text prefix:\n%s", string(store.data[:128]))
+	}
+	if got := result.Meta[tools.MetaContentType]; got != tools.ContentTypeJSON {
+		t.Fatalf("content type meta = %#v, want JSON (meta %#v)", got, result.Meta)
+	}
+}
+
 func TestToolLargeResultWithoutArtifactStoreFailsMetadata(t *testing.T) {
 	large := strings.Repeat("x", maxResultContent+100)
 	tool := NewTool(runtimemcp.ToolDefinition{
@@ -326,14 +357,16 @@ func (f *fakeCaller) CallTool(ctx context.Context, serverName, toolName string, 
 }
 
 type fakeArtifactStore struct {
-	called bool
-	data   []byte
-	err    error
+	called      bool
+	data        []byte
+	contentType string
+	err         error
 }
 
 func (f *fakeArtifactStore) Write(req ArtifactWriteRequest) (Artifact, error) {
 	f.called = true
 	f.data = append([]byte(nil), req.Data...)
+	f.contentType = req.ContentType
 	if f.err != nil {
 		return Artifact{}, f.err
 	}

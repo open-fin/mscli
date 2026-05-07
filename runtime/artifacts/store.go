@@ -54,7 +54,8 @@ func (s Store) Write(req WriteRequest) (Artifact, error) {
 		return Artifact{}, fmt.Errorf("create tool-results directory: %w", err)
 	}
 
-	name := artifactFilename(req.Prefix, req.Name)
+	contentType := strings.TrimSpace(req.ContentType)
+	name := artifactFilename(req.Prefix, req.Name, contentType)
 	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, req.Data, 0644); err != nil {
 		return Artifact{}, fmt.Errorf("write tool result: %w", err)
@@ -64,7 +65,7 @@ func (s Store) Write(req WriteRequest) (Artifact, error) {
 		Path:         path,
 		RelativePath: filepath.Join(relativeDir, name),
 		Size:         int64(len(req.Data)),
-		ContentType:  strings.TrimSpace(req.ContentType),
+		ContentType:  contentType,
 	}, nil
 }
 
@@ -78,10 +79,19 @@ func WorkspaceKey(workspace string) string {
 	return key
 }
 
-func artifactFilename(prefix, name string) string {
+func artifactFilename(prefix, name, contentType string) string {
 	prefix = safeName(prefix)
 	name = safeName(name)
-	return fmt.Sprintf("%s-%s-%d.txt", prefix, name, time.Now().UnixMilli())
+	return fmt.Sprintf("%s-%s-%d%s", prefix, name, time.Now().UnixMilli(), extensionForContentType(contentType))
+}
+
+func extensionForContentType(contentType string) string {
+	switch strings.ToLower(strings.TrimSpace(contentType)) {
+	case "application/json":
+		return ".json"
+	default:
+		return ".txt"
+	}
 }
 
 func safeName(name string) string {

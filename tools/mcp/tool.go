@@ -184,17 +184,26 @@ func (t *Tool) persistLargeResultNotice(content string, result *runtimemcp.CallR
 	if t.artifactStore == nil {
 		return fmt.Sprintf("Error: result (%s characters) exceeds maximum allowed tokens. No artifact store is configured. If this MCP server provides pagination or filtering tools, use them to retrieve specific portions of the data.", formatInt(len(content))), nil
 	}
-	contentType := ContentTypeForMCPArtifact(result)
+	artifactData, contentType := artifactPayload(content, result)
 	artifact, err := t.artifactStore.Write(ArtifactWriteRequest{
 		Prefix:      "mcp",
 		Name:        fmt.Sprintf("%s-%s", t.def.ServerName, t.def.OriginalToolName),
 		ContentType: contentType,
-		Data:        []byte(content),
+		Data:        artifactData,
 	})
 	if err != nil {
 		return fmt.Sprintf("Error: result (%s characters) exceeds maximum allowed tokens. Failed to save output to file: %v. If this MCP server provides pagination or filtering tools, use them to retrieve specific portions of the data.", formatInt(len(content)), err), nil
 	}
 	return fmt.Sprintf("Result (%s characters) exceeds the inline limit. Output has been saved to %s.\nFormat: %s\nIf this MCP server provides pagination or filtering tools, use them to retrieve specific portions of the data.", formatInt(len(content)), artifact.Path, resultFormatDescription(result)), &artifact
+}
+
+func artifactPayload(content string, result *runtimemcp.CallResult) ([]byte, string) {
+	if result != nil && result.StructuredContent != nil && len(result.Content) == 0 {
+		if data, err := json.MarshalIndent(result.StructuredContent, "", "  "); err == nil {
+			return data, tools.ContentTypeJSON
+		}
+	}
+	return []byte(content), tools.ContentTypeText
 }
 
 func resultFormatDescription(result *runtimemcp.CallResult) string {
