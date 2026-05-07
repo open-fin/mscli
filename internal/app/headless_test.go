@@ -104,7 +104,7 @@ func TestRunHeadlessExecCommandRunsRawTaskAndPrintsResumeHint(t *testing.T) {
 	if err := app.runHeadlessCommand("exec", "inspect workspace", &out); err != nil {
 		t.Fatalf("run headless exec: %v", err)
 	}
-	wantHint := "Resume the previous conversation with: mscli resume " + sessionID
+	wantHint := "Resume this conversation with: mscli resume " + sessionID
 	if got := out.String(); got != "done\n"+wantHint+"\n" {
 		t.Fatalf("stdout = %q, want %q", got, "done\n"+wantHint+"\n")
 	}

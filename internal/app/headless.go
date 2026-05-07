@@ -43,7 +43,7 @@ func (a *Application) runHeadlessCommand(command, rawInput string, out io.Writer
 	if err := a.runTaskHeadless(task, out); err != nil {
 		return err
 	}
-	a.printHeadlessResumeHint(out)
+	a.printHeadlessResumeHint(command, out)
 	return nil
 }
 
@@ -66,20 +66,23 @@ func (a *Application) headlessExecTask(rawInput string) (string, error) {
 	return expanded, nil
 }
 
-func (a *Application) printHeadlessResumeHint(out io.Writer) {
+func (a *Application) printHeadlessResumeHint(command string, out io.Writer) {
 	if out == nil {
 		return
 	}
-	hint := a.headlessResumeHint()
+	hint := a.headlessResumeHint(command)
 	if hint == "" {
 		return
 	}
 	_, _ = fmt.Fprintln(out, hint)
 }
 
-func (a *Application) headlessResumeHint() string {
+func (a *Application) headlessResumeHint(command string) string {
 	if a == nil || a.session == nil {
 		return ""
+	}
+	if command == "exec" {
+		return fmt.Sprintf("Resume this conversation with: mscli resume %s", a.session.ID())
 	}
 	return cliResumeHintForSession(a.session.ID())
 }
