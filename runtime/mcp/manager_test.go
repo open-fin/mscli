@@ -702,6 +702,23 @@ func TestManagerReconnectsAfterCanceledCall(t *testing.T) {
 	}
 }
 
+func TestManagerReconnectsAfterStdioServerExits(t *testing.T) {
+	mgr := NewManager(Config{ConnectTimeout: time.Second, CallTimeout: time.Second})
+	server := managerTestServer("fake", "exit-after-list", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := mgr.Connect(ctx, server); err != nil {
+		t.Fatalf("Connect() err = %v", err)
+	}
+
+	if _, err := mgr.ListTools(ctx, "fake"); err != nil {
+		t.Fatalf("first ListTools() err = %v", err)
+	}
+	if _, err := mgr.ListTools(ctx, "fake"); err != nil {
+		t.Fatalf("second ListTools() err = %v", err)
+	}
+}
+
 func managerTestServer(name, mode string, env map[string]string) ScopedServer {
 	mergedEnv := map[string]string{"GO_WANT_HELPER_PROCESS": "1"}
 	for key, value := range env {

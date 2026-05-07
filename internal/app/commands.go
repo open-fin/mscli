@@ -405,7 +405,10 @@ func (a *Application) enableDisabledMCPServer(ctx context.Context, workspaceRoot
 		return fmt.Sprintf("MCP server %q not found", server.Name), false, nil
 	}
 	if err := a.reconnectMCPServer(ctx, workspaceRoot, active); err != nil {
-		return fmt.Sprintf("MCP server %q enabled, but failed to reconnect", server.Name), true, nil
+		if restoreErr := restoreDisabled(); restoreErr != nil {
+			return "", false, fmt.Errorf("restore mcp server %q disabled state: %w", server.Name, restoreErr)
+		}
+		return fmt.Sprintf("MCP server %q failed to reconnect after enable: %v", server.Name, err), false, nil
 	}
 	return fmt.Sprintf("MCP server %q enabled", server.Name), true, nil
 }

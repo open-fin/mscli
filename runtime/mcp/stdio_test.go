@@ -317,6 +317,9 @@ func TestMCPHelperProcess(t *testing.T) {
 					},
 				},
 			})
+			if mode == "exit-after-list" {
+				os.Exit(0)
+			}
 		case "tools/call":
 			if mode == "block-call" {
 				for {

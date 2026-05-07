@@ -85,7 +85,13 @@ func (c *stdioClient) Connect(ctx context.Context) error {
 
 	waitCh := make(chan error, 1)
 	go func() {
-		waitCh <- cmd.Wait()
+		err := cmd.Wait()
+		c.mu.Lock()
+		if c.cmd == cmd {
+			c.unhealthy = true
+		}
+		c.mu.Unlock()
+		waitCh <- err
 	}()
 	stderrBuf := newBoundedBuffer(stderrLimit)
 	go func() {
@@ -153,7 +159,7 @@ func (c *stdioClient) ListTools(ctx context.Context) ([]ToolDefinition, error) {
 		Tools []json.RawMessage `json:"tools"`
 	}
 	if err := rpc.call(callCtx, "tools/list", map[string]any{}, &result); err != nil {
-		if isContextErr(err) {
+		if isContextErr(err) || isStdioTransportErr(err) {
 			_ = c.retire(context.Background(), false)
 		}
 		return nil, c.withStderr(err)
@@ -182,7 +188,7 @@ func (c *stdioClient) CallTool(ctx context.Context, toolName string, args json.R
 		"name":      toolName,
 		"arguments": arguments,
 	}, &rawResult); err != nil {
-		if isContextErr(err) {
+		if isContextErr(err) || isStdioTransportErr(err) {
 			_ = c.retire(context.Background(), false)
 		}
 		return nil, c.withStderr(err)
@@ -202,6 +208,19 @@ func (c *stdioClient) healthy() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return !c.closed && !c.unhealthy && c.cmd != nil && c.rpc != nil
+}
+
+func isStdioTransportErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, os.ErrClosed) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "broken pipe") ||
+		strings.Contains(msg, "connection reset by peer") ||
+		strings.Contains(msg, "file already closed")
 }
 
 func (c *stdioClient) stderrString() string {

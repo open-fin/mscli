@@ -76,6 +76,14 @@ func (m *manager) ListTools(ctx context.Context, serverName string) ([]ToolDefin
 	if isContextErr(err) {
 		m.dropClient(serverName, client)
 	}
+	if shouldRetryClientErr(err) {
+		m.dropClient(serverName, client)
+		client, retryErr := m.ensureClient(ctx, serverName)
+		if retryErr != nil {
+			return nil, retryErr
+		}
+		return client.ListTools(ctx)
+	}
 	return tools, err
 }
 
@@ -88,7 +96,19 @@ func (m *manager) CallTool(ctx context.Context, serverName, toolName string, arg
 	if isContextErr(err) {
 		m.dropClient(serverName, client)
 	}
+	if shouldRetryClientErr(err) {
+		m.dropClient(serverName, client)
+		client, retryErr := m.ensureClient(ctx, serverName)
+		if retryErr != nil {
+			return nil, retryErr
+		}
+		return client.CallTool(ctx, toolName, args)
+	}
 	return result, err
+}
+
+func shouldRetryClientErr(err error) bool {
+	return err != nil && !isContextErr(err) && isStdioTransportErr(err)
 }
 
 func (m *manager) CloseServer(ctx context.Context, serverName string) error {

@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 )
 
 var safeNamePattern = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
@@ -55,9 +54,8 @@ func (s Store) Write(req WriteRequest) (Artifact, error) {
 	}
 
 	contentType := strings.TrimSpace(req.ContentType)
-	name := artifactFilename(req.Prefix, req.Name, contentType)
-	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, req.Data, 0644); err != nil {
+	path, name, err := writeArtifactFile(dir, req.Prefix, req.Name, contentType, req.Data)
+	if err != nil {
 		return Artifact{}, fmt.Errorf("write tool result: %w", err)
 	}
 
@@ -79,10 +77,34 @@ func WorkspaceKey(workspace string) string {
 	return key
 }
 
-func artifactFilename(prefix, name, contentType string) string {
+func writeArtifactFile(dir, prefix, name, contentType string, data []byte) (string, string, error) {
+	pattern := artifactFilePattern(prefix, name, contentType)
+	file, err := os.CreateTemp(dir, pattern)
+	if err != nil {
+		return "", "", err
+	}
+	path := file.Name()
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return "", "", err
+	}
+	if err := file.Chmod(0644); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return "", "", err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", "", err
+	}
+	return path, filepath.Base(path), nil
+}
+
+func artifactFilePattern(prefix, name, contentType string) string {
 	prefix = safeName(prefix)
 	name = safeName(name)
-	return fmt.Sprintf("%s-%s-%d%s", prefix, name, time.Now().UnixMilli(), extensionForContentType(contentType))
+	return fmt.Sprintf("%s-%s-*%s", prefix, name, extensionForContentType(contentType))
 }
 
 func extensionForContentType(contentType string) string {

@@ -1,8 +1,11 @@
 package artifacts
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -57,6 +60,48 @@ func TestStoreWriteUsesJSONExtensionForJSONArtifacts(t *testing.T) {
 	}
 	if got := filepath.Ext(artifact.RelativePath); got != ".json" {
 		t.Fatalf("relative artifact extension = %q, want .json (relative path %q)", got, artifact.RelativePath)
+	}
+}
+
+func TestStoreWriteConcurrentSameNameDoesNotOverwriteArtifacts(t *testing.T) {
+	home := t.TempDir()
+	store := Store{HomeDir: home, WorkspaceRoot: t.TempDir()}
+	const count = 128
+
+	artifacts := make([]Artifact, count)
+	errs := make([]error, count)
+	var wg sync.WaitGroup
+	for i := 0; i < count; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			artifacts[i], errs[i] = store.Write(WriteRequest{
+				Prefix:      "mcp",
+				Name:        "same",
+				ContentType: "text/plain",
+				Data:        []byte(fmt.Sprintf("payload-%03d", i)),
+			})
+		}()
+	}
+	wg.Wait()
+
+	seen := make(map[string]struct{}, count)
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("Write(%d) failed: %v", i, err)
+		}
+		if _, ok := seen[artifacts[i].Path]; ok {
+			t.Fatalf("duplicate artifact path %q", artifacts[i].Path)
+		}
+		seen[artifacts[i].Path] = struct{}{}
+		data, err := os.ReadFile(artifacts[i].Path)
+		if err != nil {
+			t.Fatalf("read artifact %d: %v", i, err)
+		}
+		if got, want := string(data), fmt.Sprintf("payload-%03d", i); got != want {
+			t.Fatalf("artifact %d content = %q, want %q", i, got, want)
+		}
 	}
 }
 

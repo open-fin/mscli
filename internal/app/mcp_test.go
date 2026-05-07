@@ -628,6 +628,34 @@ func TestCmdMCPEnableRemovesLocalDisabledState(t *testing.T) {
 	}
 }
 
+func TestCmdMCPEnableReconnectFailureKeepsServerDisabled(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workDir := t.TempDir()
+	writeAppMCPConfig(t, runtimemcp.LocalConfigPath(workDir), map[string]any{"echo": appStdioRaw("echo")}, []string{"echo"})
+	fakeMgr := newFakeMCPManager()
+	fakeMgr.connectErr["echo"] = errors.New("boom")
+	app := &Application{EventCh: make(chan model.Event, 8), WorkDir: workDir, mcpManager: fakeMgr, toolRegistry: tools.NewRegistry()}
+
+	app.handleCommand("/mcp enable echo")
+	ev := <-app.EventCh
+	if strings.Contains(ev.Message, `"echo" enabled`) || !strings.Contains(ev.Message, "failed to reconnect") {
+		t.Fatalf("message = %q, want reconnect failure without enabled success", ev.Message)
+	}
+	disabled, err := runtimemcp.ReadLocalDisabledServers(workDir)
+	if err != nil {
+		t.Fatalf("ReadLocalDisabledServers: %v", err)
+	}
+	if strings.Join(disabled, ",") != "echo" {
+		t.Fatalf("disabled = %#v, want echo preserved", disabled)
+	}
+	if got := strings.Join(fakeMgr.connected, ","); got != "" {
+		t.Fatalf("connected = %q, want none after reconnect failure", got)
+	}
+	if _, ok := app.toolRegistry.Get("mcp__echo__tool"); ok {
+		t.Fatal("registry has mcp__echo__tool after failed enable")
+	}
+}
+
 func TestCmdMCPEnableDisabledPendingProjectDoesNotReconnectWithoutApproval(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	workDir := t.TempDir()
