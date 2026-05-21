@@ -61,14 +61,28 @@ func (c *anthropicCodec) encodeMessages(msgs []Message) (string, []anthropicMess
 
 	systemParts := make([]string, 0, len(msgs))
 	result := make([]anthropicMessage, 0, len(msgs))
-	for _, msg := range msgs {
+	for i := 0; i < len(msgs); i++ {
+		msg := msgs[i]
 		switch msg.Role {
 		case "system":
 			if text := strings.TrimSpace(msg.Content); text != "" {
 				systemParts = append(systemParts, text)
 			}
 		case "tool":
-			result = appendToolResultMessage(result, msg)
+			var blocks []anthropicContentBlock
+			for i < len(msgs) && msgs[i].Role == "tool" {
+				if block, ok := encodeAnthropicToolResultBlock(msgs[i]); ok {
+					blocks = append(blocks, block)
+				}
+				i++
+			}
+			i--
+			if len(blocks) > 0 {
+				result = append(result, anthropicMessage{
+					Role:    "user",
+					Content: blocks,
+				})
+			}
 		default:
 			if encoded, ok := c.encodeMessage(msg); ok {
 				result = append(result, encoded)
@@ -124,22 +138,29 @@ func (c *anthropicCodec) encodeMessage(msg Message) (anthropicMessage, bool) {
 }
 
 func appendToolResultMessage(messages []anthropicMessage, msg Message) []anthropicMessage {
-	if strings.TrimSpace(msg.ToolCallID) == "" {
+	block, ok := encodeAnthropicToolResultBlock(msg)
+	if !ok {
 		return messages
-	}
-
-	content, isError := decodeAnthropicToolResultPayload(msg.Content)
-	block := anthropicContentBlock{
-		Type:      "tool_result",
-		ToolUseID: msg.ToolCallID,
-		Content:   content,
-		IsError:   isError,
 	}
 
 	return append(messages, anthropicMessage{
 		Role:    "user",
 		Content: []anthropicContentBlock{block},
 	})
+}
+
+func encodeAnthropicToolResultBlock(msg Message) (anthropicContentBlock, bool) {
+	if strings.TrimSpace(msg.ToolCallID) == "" {
+		return anthropicContentBlock{}, false
+	}
+
+	content, isError := decodeAnthropicToolResultPayload(msg.Content)
+	return anthropicContentBlock{
+		Type:      "tool_result",
+		ToolUseID: msg.ToolCallID,
+		Content:   content,
+		IsError:   isError,
+	}, true
 }
 
 func decodeAnthropicToolResultPayload(raw string) (string, *bool) {
