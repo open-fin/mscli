@@ -27,10 +27,14 @@ type ShellTool struct {
 }
 
 // NewShellTool creates a new shell tool backed by a runtime shell runner.
-func NewShellTool(runner *rshell.Runner, workDir string) *ShellTool {
+func NewShellTool(runner *rshell.Runner, workDir ...string) *ShellTool {
+	workspace := ""
+	if len(workDir) > 0 {
+		workspace = workDir[0]
+	}
 	return &ShellTool{
 		runner:   runner,
-		spillDir: tools.DefaultSpillDir(workDir),
+		spillDir: tools.DefaultSpillDir(workspace),
 	}
 }
 
