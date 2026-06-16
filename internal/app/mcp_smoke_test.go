@@ -11,7 +11,6 @@ import (
 
 	runtimemcp "gitcode.com/mindspore/mscli/runtime/mcp"
 	"gitcode.com/mindspore/mscli/tools"
-	"gitcode.com/mindspore/mscli/ui/model"
 )
 
 func TestSmokeMCPRealStdioEchoServerProjectApprovalAndCall(t *testing.T) {

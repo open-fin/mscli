@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -91,8 +89,6 @@ func (a *Application) handleCommand(input string) {
 		a.cmdPreflight(expanded)
 	case "/factory":
 		a.cmdFactory(cmd.Remainder)
-	case "/now":
-		a.cmdNow()
 	case "/mcp":
 		a.cmdMCP(args)
 	case "/skill":

@@ -274,12 +274,6 @@ func (r *Registry) registerDefaults() {
 	})
 
 	r.Register(Command{
-		Name:        "/now",
-		Description: "Show issue dashboard",
-		Usage:       "/now",
-	})
-
-	r.Register(Command{
 		Name:        "/mcp",
 		Description: "Show and manage MCP servers",
 		Usage:       "/mcp [reconnect <server>|enable [server]|disable [server]]",
