@@ -1,6 +1,6 @@
 package app
 
-import "github.com/mindspore-lab/mindspore-cli/ui/model"
+import "gitcode.com/mindspore/mscli/ui/model"
 
 const initCommandPrompt = `Please analyze this codebase and create a MSCLI.md file, which will be given to future instances of mscli to operate in this repository.
 

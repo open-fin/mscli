@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mindspore-lab/mindspore-cli/agent/loop"
-	"github.com/mindspore-lab/mindspore-cli/tools"
-	"github.com/mindspore-lab/mindspore-cli/ui/model"
+	"gitcode.com/mindspore/mscli/agent/loop"
+	"gitcode.com/mindspore/mscli/tools"
+	"gitcode.com/mindspore/mscli/ui/model"
 )
 
 func TestCmdEffort_NoArgsShowsCurrentProviderOptions(t *testing.T) {

@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	agentctx "gitcode.com/mindspore/mscli/agent/context"
 	"gitcode.com/mindspore/mscli/agent/loop"
 	"gitcode.com/mindspore/mscli/agent/session"
@@ -24,6 +23,7 @@ import (
 	"gitcode.com/mindspore/mscli/ui/panels"
 	"gitcode.com/mindspore/mscli/ui/render"
 	"gitcode.com/mindspore/mscli/ui/theme"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 const provideAPIKeyFirstMsg = "LLM unavailable: provide api key first."

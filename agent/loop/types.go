@@ -8,11 +8,11 @@ import (
 
 // Task represents a user task.
 type Task struct {
-	ID                   string
-	Description          string
+	ID          string
+	Description string
 	// InitialMessages are inserted into the LLM context before the task's user
 	// message, but are not recorded as user-entered prompts.
-	InitialMessages     []llm.Message
+	InitialMessages []llm.Message
 	// UserMessage overrides the context message while Description remains the visible task label.
 	UserMessage          string
 	Context              map[string]string

@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	agentctx "github.com/mindspore-lab/mindspore-cli/agent/context"
-	"github.com/mindspore-lab/mindspore-cli/agent/session"
-	"github.com/mindspore-lab/mindspore-cli/ui/model"
+	agentctx "gitcode.com/mindspore/mscli/agent/context"
+	"gitcode.com/mindspore/mscli/agent/session"
+	"gitcode.com/mindspore/mscli/ui/model"
 )
 
 func TestBuildPromptsSplitAutoMemoryInstructionsFromLoadedMemory(t *testing.T) {

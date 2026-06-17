@@ -687,13 +687,13 @@ func interruptedToolResultContent(partialOutput string) string {
 }
 
 var toolEventMap = map[string]string{
-	"read":       EventToolRead,
-	"grep":       EventToolGrep,
-	"glob":       EventToolGlob,
-	"edit":       EventToolEdit,
-	"write":      EventToolWrite,
-	"shell":      EventCmdFinished,
-	"load_skill": EventToolSkill,
+	"read":            EventToolRead,
+	"grep":            EventToolGrep,
+	"glob":            EventToolGlob,
+	"edit":            EventToolEdit,
+	"write":           EventToolWrite,
+	"shell":           EventCmdFinished,
+	"load_skill":      EventToolSkill,
 	"AskUserQuestion": EventToolAskUserQuestion,
 }
 
