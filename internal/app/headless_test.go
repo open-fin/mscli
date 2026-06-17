@@ -5,13 +5,13 @@ import (
 	"strings"
 	"testing"
 
-	agentctx "github.com/mindspore-lab/mindspore-cli/agent/context"
-	"github.com/mindspore-lab/mindspore-cli/agent/loop"
-	"github.com/mindspore-lab/mindspore-cli/agent/session"
-	"github.com/mindspore-lab/mindspore-cli/configs"
-	"github.com/mindspore-lab/mindspore-cli/permission"
-	"github.com/mindspore-lab/mindspore-cli/tools"
-	"github.com/mindspore-lab/mindspore-cli/ui/model"
+	agentctx "gitcode.com/mindspore/mscli/agent/context"
+	"gitcode.com/mindspore/mscli/agent/loop"
+	"gitcode.com/mindspore/mscli/agent/session"
+	"gitcode.com/mindspore/mscli/configs"
+	"gitcode.com/mindspore/mscli/permission"
+	"gitcode.com/mindspore/mscli/tools"
+	"gitcode.com/mindspore/mscli/ui/model"
 )
 
 func TestRunHeadlessIssueCommandBuildsFixTaskAndEnablesYolo(t *testing.T) {

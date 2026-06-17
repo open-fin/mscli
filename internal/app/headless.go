@@ -7,9 +7,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/mindspore-lab/mindspore-cli/agent/loop"
-	"github.com/mindspore-lab/mindspore-cli/integrations/llm"
-	issuepkg "github.com/mindspore-lab/mindspore-cli/internal/issues"
+	"gitcode.com/mindspore/mscli/agent/loop"
 )
 
 func (a *Application) runHeadlessIssueCommand(command, rawInput string, out io.Writer) error {
@@ -96,26 +94,7 @@ func (a *Application) headlessIssueTask(command, rawInput string) (string, error
 	if err != nil {
 		return "", err
 	}
-	if target.HasIssue {
-		if err := a.ensureIssueServiceHeadless(); err != nil {
-			return "", err
-		}
-	}
 	return a.buildSkillTask(target, command)
-}
-
-func (a *Application) ensureIssueServiceHeadless() error {
-	if a.issueService != nil {
-		return nil
-	}
-	cred, err := loadCredentials()
-	if err != nil {
-		return fmt.Errorf("not logged in. run /login <token> first")
-	}
-	a.issueService = issuepkg.NewService(issuepkg.NewRemoteStore(cred.ServerURL, cred.Token))
-	a.issueUser = cred.User
-	a.issueRole = cred.Role
-	return nil
 }
 
 func (a *Application) runTaskHeadless(description string, out io.Writer) error {
@@ -142,14 +121,20 @@ func (a *Application) runTaskHeadless(description string, out io.Writer) error {
 		ID:          generateTaskID(),
 		Description: description,
 	}
-	if a.ctxManager != nil && a.ctxManager.ShouldCompactAfterAdding(llm.NewUserMessage(description)) {
+	initialMessages, err := a.buildTaskInitialMessages()
+	if err != nil {
+		return fmt.Errorf("build initial user context: %w", err)
+	}
+	task.InitialMessages = initialMessages
+	task.UserMessage = description
+	if a.ctxManager != nil && a.taskWillCompact(initialMessages, description) {
 		printer.println(loop.ContextCompactStartMessage)
 	}
 
 	ctx, runID := a.beginTaskRun()
 	defer a.finishTaskRun(runID)
 
-	err := a.Engine.RunWithContextStream(ctx, task, func(ev loop.Event) {
+	err = a.Engine.RunWithContextStream(ctx, task, func(ev loop.Event) {
 		printer.printLoopEvent(ev)
 	})
 	printer.finish()

@@ -14,6 +14,7 @@ import (
 func TestBuildPromptsSplitAutoMemoryInstructionsFromLoadedMemory(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	workDir := t.TempDir()
 	bucketDir, err := session.BucketDirForWorkDir(workDir)
@@ -79,6 +80,7 @@ func TestBuildPromptsSplitAutoMemoryInstructionsFromLoadedMemory(t *testing.T) {
 func TestBuildInitialUserContextPromptCapsMemoryIndex(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	workDir := t.TempDir()
 	bucketDir, err := session.BucketDirForWorkDir(workDir)
@@ -114,6 +116,7 @@ func TestBuildInitialUserContextPromptCapsMemoryIndex(t *testing.T) {
 func TestBuildEffectiveSystemPromptRespectsMemoryDisabled(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("MSCLI_MEMORY_ENABLED", "false")
 
 	workDir := t.TempDir()
@@ -147,6 +150,7 @@ func TestBuildEffectiveSystemPromptRespectsMemoryDisabled(t *testing.T) {
 func TestBuildInitialUserContextPromptUsesMemoryPathOverride(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	workDir := t.TempDir()
 	overrideDir := filepath.Join(t.TempDir(), "custom-memory")
@@ -178,6 +182,7 @@ func TestBuildInitialUserContextPromptUsesMemoryPathOverride(t *testing.T) {
 func TestBuildInitialUserContextPromptLoadsMSCLIInstructionsInPriorityOrder(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("MSCLI_MEMORY_ENABLED", "false")
 
 	base := t.TempDir()
