@@ -1,0 +1,119 @@
+package artifacts
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+)
+
+func TestStoreWriteScopesArtifactsByWorkspaceAndSanitizesName(t *testing.T) {
+	home := t.TempDir()
+	workspace := filepath.Join(t.TempDir(), "my:workspace")
+	store := Store{HomeDir: home, WorkspaceRoot: workspace}
+
+	artifact, err := store.Write(WriteRequest{
+		Prefix:      "mcp",
+		Name:        "server/tool result?.txt",
+		ContentType: "text/plain",
+		Data:        []byte("hello"),
+	})
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	wantDir := filepath.Join(home, ".mscli", "projects", WorkspaceKey(workspace), "tool-results")
+	if !strings.HasPrefix(artifact.Path, wantDir+string(filepath.Separator)) {
+		t.Fatalf("artifact path = %q, want under %q", artifact.Path, wantDir)
+	}
+	if strings.Contains(filepath.Base(artifact.Path), "/") || strings.Contains(filepath.Base(artifact.Path), "?") {
+		t.Fatalf("artifact filename not sanitized: %q", filepath.Base(artifact.Path))
+	}
+	if got, want := artifact.RelativePath, filepath.Join("projects", WorkspaceKey(workspace), "tool-results", filepath.Base(artifact.Path)); got != want {
+		t.Fatalf("RelativePath = %q, want %q", got, want)
+	}
+	if got := artifact.Size; got != int64(len("hello")) {
+		t.Fatalf("Size = %d, want %d", got, len("hello"))
+	}
+	if got := artifact.ContentType; got != "text/plain" {
+		t.Fatalf("ContentType = %q, want text/plain", got)
+	}
+}
+
+func TestStoreWriteUsesJSONExtensionForJSONArtifacts(t *testing.T) {
+	home := t.TempDir()
+	store := Store{HomeDir: home, WorkspaceRoot: t.TempDir()}
+
+	artifact, err := store.Write(WriteRequest{
+		Prefix:      "mcp",
+		Name:        "structured",
+		ContentType: "application/json",
+		Data:        []byte(`{"ok":true}`),
+	})
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+	if got := filepath.Ext(artifact.Path); got != ".json" {
+		t.Fatalf("artifact extension = %q, want .json (path %q)", got, artifact.Path)
+	}
+	if got := filepath.Ext(artifact.RelativePath); got != ".json" {
+		t.Fatalf("relative artifact extension = %q, want .json (relative path %q)", got, artifact.RelativePath)
+	}
+}
+
+func TestStoreWriteConcurrentSameNameDoesNotOverwriteArtifacts(t *testing.T) {
+	home := t.TempDir()
+	store := Store{HomeDir: home, WorkspaceRoot: t.TempDir()}
+	const count = 128
+
+	artifacts := make([]Artifact, count)
+	errs := make([]error, count)
+	var wg sync.WaitGroup
+	for i := 0; i < count; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			artifacts[i], errs[i] = store.Write(WriteRequest{
+				Prefix:      "mcp",
+				Name:        "same",
+				ContentType: "text/plain",
+				Data:        []byte(fmt.Sprintf("payload-%03d", i)),
+			})
+		}()
+	}
+	wg.Wait()
+
+	seen := make(map[string]struct{}, count)
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("Write(%d) failed: %v", i, err)
+		}
+		if _, ok := seen[artifacts[i].Path]; ok {
+			t.Fatalf("duplicate artifact path %q", artifacts[i].Path)
+		}
+		seen[artifacts[i].Path] = struct{}{}
+		data, err := os.ReadFile(artifacts[i].Path)
+		if err != nil {
+			t.Fatalf("read artifact %d: %v", i, err)
+		}
+		if got, want := string(data), fmt.Sprintf("payload-%03d", i); got != want {
+			t.Fatalf("artifact %d content = %q, want %q", i, got, want)
+		}
+	}
+}
+
+func TestWorkspaceKeyPreservesCurrentMCPAlgorithm(t *testing.T) {
+	got := WorkspaceKey(filepath.Join(string(filepath.Separator), "tmp", "a:b", "workspace"))
+	if strings.Contains(got, string(filepath.Separator)) || strings.Contains(got, ":") {
+		t.Fatalf("WorkspaceKey contains raw separator or colon: %q", got)
+	}
+	if got == "" || got == "workspace" {
+		t.Fatalf("WorkspaceKey = %q, want path-derived key", got)
+	}
+	if WorkspaceKey("") != "workspace" {
+		t.Fatalf("WorkspaceKey(empty) = %q, want workspace", WorkspaceKey(""))
+	}
+}

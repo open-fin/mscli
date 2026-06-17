@@ -57,9 +57,12 @@ func TestRunnerRunStream_EmitsOutputWhileCollectingResult(t *testing.T) {
 func TestReadCapped_KeepsMostRecentOutputWhenTruncated(t *testing.T) {
 	input := strings.NewReader("line-1\nline-2\nline-3\nline-4\n")
 
-	got, err := readCapped(input, len("line-3\nline-4"), nil)
+	got, truncated, err := readCapped(input, len("line-3\nline-4"), nil)
 	if err != nil {
 		t.Fatalf("readCapped failed: %v", err)
+	}
+	if !truncated {
+		t.Fatal("truncated = false, want true")
 	}
 
 	if !strings.Contains(got, "line-3") || !strings.Contains(got, "line-4") {
@@ -77,11 +80,14 @@ func TestReadCapped_ContinuesEmittingAfterWindowExceeded(t *testing.T) {
 	input := strings.NewReader("line-1\nline-2\nline-3\nline-4\n")
 
 	var emitted []string
-	got, err := readCapped(input, len("line-3\nline-4"), func(line string) {
+	got, truncated, err := readCapped(input, len("line-3\nline-4"), func(line string) {
 		emitted = append(emitted, line)
 	})
 	if err != nil && err != io.EOF {
 		t.Fatalf("readCapped failed: %v", err)
+	}
+	if !truncated {
+		t.Fatal("truncated = false, want true")
 	}
 
 	if !strings.Contains(got, "line-4") {
@@ -92,6 +98,24 @@ func TestReadCapped_ContinuesEmittingAfterWindowExceeded(t *testing.T) {
 	}
 	if gotLast := emitted[len(emitted)-1]; gotLast != "line-4" {
 		t.Fatalf("last emitted line = %q, want line-4", gotLast)
+	}
+}
+
+func TestRunnerRunStream_ReportsStdoutAndStderrTruncation(t *testing.T) {
+	runner := NewRunner(Config{
+		WorkDir: ".",
+		Timeout: 2 * time.Second,
+	})
+
+	result, err := runner.RunStream(context.Background(), "yes stdout | head -c 70000; yes stderr | head -c 70000 >&2", nil)
+	if err != nil {
+		t.Fatalf("RunStream failed: %v", err)
+	}
+	if !result.StdoutTruncated {
+		t.Fatal("StdoutTruncated = false, want true")
+	}
+	if !result.StderrTruncated {
+		t.Fatal("StderrTruncated = false, want true")
 	}
 }
 

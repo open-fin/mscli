@@ -58,6 +58,7 @@ type MessageRecord struct {
 	Trigger      string          `json:"trigger,omitempty"`
 	BeforeTokens int             `json:"before_tokens,omitempty"`
 	AfterTokens  int             `json:"after_tokens,omitempty"`
+	Meta         map[string]any  `json:"meta,omitempty"`
 }
 
 // Snapshot stores the latest restorable context state.
@@ -397,7 +398,7 @@ func (s *Session) AppendToolCall(tc llm.ToolCall) error {
 }
 
 // AppendToolResult appends one tool result record and syncs it immediately.
-func (s *Session) AppendToolResult(toolCallID, toolName, content string) error {
+func (s *Session) AppendToolResult(toolCallID, toolName, content string, meta map[string]any) error {
 	if s == nil {
 		return fmt.Errorf("session is nil")
 	}
@@ -411,6 +412,7 @@ func (s *Session) AppendToolResult(toolCallID, toolName, content string) error {
 		Content:    content,
 		ToolName:   toolName,
 		ToolCallID: toolCallID,
+		Meta:       cloneMeta(meta),
 	}
 	return s.appendTrajectoryEntryLocked(record)
 }
@@ -980,6 +982,7 @@ func loadFromPath(path string, appendOnly bool) (*Session, error) {
 				_ = file.Close()
 				return nil, fmt.Errorf("decode message record: %w", err)
 			}
+			normalizeMessageRecordMeta(&record)
 			entries = append(entries, makeTrajectoryEntry(record))
 		case recordTypeResumeState:
 			var record ResumeStateRecord
@@ -1412,6 +1415,48 @@ func replayToolResultEvent(record MessageRecord) model.Event {
 		ToolName:   record.ToolName,
 		ToolCallID: record.ToolCallID,
 		Message:    record.Content,
+		Meta:       cloneMeta(record.Meta),
+	}
+}
+
+func normalizeMessageRecordMeta(record *MessageRecord) {
+	if record == nil || len(record.Meta) == 0 {
+		return
+	}
+	normalizeInt64Meta(record.Meta, "duration_ms")
+	normalizeInt64Meta(record.Meta, "bytes")
+	normalizeIntMeta(record.Meta, "exit_code")
+}
+
+func normalizeInt64Meta(meta map[string]any, key string) {
+	switch v := meta[key].(type) {
+	case float64:
+		meta[key] = int64(v)
+	case int:
+		meta[key] = int64(v)
+	case int32:
+		meta[key] = int64(v)
+	case int64:
+	case json.Number:
+		if n, err := v.Int64(); err == nil {
+			meta[key] = n
+		}
+	}
+}
+
+func normalizeIntMeta(meta map[string]any, key string) {
+	switch v := meta[key].(type) {
+	case float64:
+		meta[key] = int(v)
+	case int:
+	case int32:
+		meta[key] = int(v)
+	case int64:
+		meta[key] = int(v)
+	case json.Number:
+		if n, err := v.Int64(); err == nil {
+			meta[key] = int(n)
+		}
 	}
 }
 

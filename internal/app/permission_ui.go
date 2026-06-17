@@ -148,7 +148,7 @@ func (p *PermissionPromptUI) promptMessage(tool, action, path string) string {
 		return msg + "\n\nEsc to cancel"
 	}
 
-	msg := fmt.Sprintf("Do you want to allow tool `%s`?", tool)
+	msg := fmt.Sprintf("Do you want to allow tool `%s`?", displayPermissionToolName(tool))
 	if action != "" {
 		msg += fmt.Sprintf("\naction: %s", action)
 	}
@@ -195,7 +195,7 @@ func (p *PermissionPromptUI) promptData(tool, action, path string) *model.Permis
 		}
 	}
 
-	msg := fmt.Sprintf("Do you want to allow tool `%s`?", tool)
+	msg := fmt.Sprintf("Do you want to allow tool `%s`?", displayPermissionToolName(tool))
 	if action != "" {
 		msg += fmt.Sprintf("\naction: %s", action)
 	}
@@ -216,6 +216,19 @@ func (p *PermissionPromptUI) promptData(tool, action, path string) *model.Permis
 		Options:      options,
 		DefaultIndex: 0,
 	}
+}
+
+func displayPermissionToolName(tool string) string {
+	tool = strings.TrimSpace(tool)
+	const prefix = "mcp__"
+	if !strings.HasPrefix(tool, prefix) {
+		return tool
+	}
+	parts := strings.SplitN(strings.TrimPrefix(tool, prefix), "__", 2)
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return tool
+	}
+	return parts[0] + " - " + parts[1] + " (MCP)"
 }
 
 func (p *PermissionPromptUI) shouldShowYOLOOption() bool {

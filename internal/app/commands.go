@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	agentctx "gitcode.com/mindspore/mscli/agent/context"
 	"gitcode.com/mindspore/mscli/integrations/llm"
 	"gitcode.com/mindspore/mscli/permission"
+	runtimemcp "gitcode.com/mindspore/mscli/runtime/mcp"
 	"gitcode.com/mindspore/mscli/ui/model"
 )
 
@@ -87,6 +89,8 @@ func (a *Application) handleCommand(input string) {
 		a.cmdPreflight(expanded)
 	case "/factory":
 		a.cmdFactory(cmd.Remainder)
+	case "/mcp":
+		a.cmdMCP(args)
 	case "/skill":
 		if err := a.handleRawSkillCommand(cmd.Remainder); err != nil {
 			a.emitInputExpansionError(err)
@@ -112,6 +116,358 @@ func (a *Application) handleCommand(input string) {
 			Message: fmt.Sprintf("Unknown command: %s. Type / to see available commands.", cmd.Name),
 		}
 	}
+}
+
+func (a *Application) cmdMCP(args []string) {
+	if len(args) == 0 || args[0] == "no-redirect" {
+		a.cmdMCPSummary()
+		return
+	}
+
+	switch args[0] {
+	case "reconnect":
+		a.cmdMCPReconnect(strings.Join(args[1:], " "))
+	case "enable":
+		a.cmdMCPToggle(true, strings.Join(args[1:], " "))
+	case "disable":
+		a.cmdMCPToggle(false, strings.Join(args[1:], " "))
+	default:
+		a.EventCh <- model.Event{
+			Type:    model.AgentReply,
+			Message: "Usage: /mcp [reconnect <server>|enable [server]|disable [server]]",
+		}
+	}
+}
+
+func (a *Application) cmdMCPSummary() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	resolved, _, err := a.resolveMCPForCommand(ctx)
+	if err != nil {
+		a.emitMCPCommandError("mcp", err)
+		return
+	}
+	if len(resolved.Servers) == 0 && len(resolved.Pending) == 0 && len(resolved.Rejected) == 0 && len(resolved.Disabled) == 0 && len(resolved.Warnings) == 0 {
+		a.EventCh <- model.Event{Type: model.AgentReply, Message: "No MCP servers configured."}
+		return
+	}
+
+	manager := a.mcpManager
+
+	var b strings.Builder
+	b.WriteString("MCP servers:")
+	for _, server := range resolved.Servers {
+		status := "not connected"
+		if manager == nil {
+			b.WriteString(fmt.Sprintf("\n  %s [%s] %s - %s", server.Name, server.Scope, server.Config.TransportType(), status))
+			continue
+		}
+		defs, err := manager.ListTools(ctx, server.Name)
+		if err != nil {
+			status = "failed: " + err.Error()
+		} else {
+			status = fmt.Sprintf("connected, %d tools", len(defs))
+		}
+		b.WriteString(fmt.Sprintf("\n  %s [%s] %s - %s", server.Name, server.Scope, server.Config.TransportType(), status))
+	}
+	for _, server := range resolved.Pending {
+		b.WriteString(fmt.Sprintf("\n  %s [%s] %s - pending approval", server.Name, server.Scope, server.Config.TransportType()))
+	}
+	for _, server := range resolved.Rejected {
+		b.WriteString(fmt.Sprintf("\n  %s [%s] %s - rejected", server.Name, server.Scope, server.Config.TransportType()))
+	}
+	for _, server := range resolved.Disabled {
+		b.WriteString(fmt.Sprintf("\n  %s [%s] %s - disabled", server.Name, server.Scope, server.Config.TransportType()))
+	}
+	if len(resolved.Warnings) > 0 {
+		b.WriteString("\n\nWarnings:")
+		for _, warning := range resolved.Warnings {
+			b.WriteString("\n  " + warning)
+		}
+	}
+	a.EventCh <- model.Event{Type: model.AgentReply, Message: b.String()}
+}
+
+func (a *Application) cmdMCPReconnect(serverName string) {
+	name := strings.TrimSpace(serverName)
+	if name == "" {
+		a.EventCh <- model.Event{Type: model.AgentReply, Message: "Usage: /mcp reconnect <server>"}
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	resolved, workspaceRoot, err := a.resolveMCPForCommand(ctx)
+	if err != nil {
+		a.emitMCPCommandError("mcp", err)
+		return
+	}
+	server, ok := findMCPServer(resolved.Servers, name)
+	if !ok {
+		if containsMCPServer(resolved.Pending, name) || containsMCPServer(resolved.Rejected, name) || containsMCPServer(resolved.Disabled, name) {
+			a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("Failed to reconnect to %s", name)}
+			return
+		}
+		a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("MCP server %q not found", name)}
+		return
+	}
+
+	if err := a.reconnectMCPServer(ctx, workspaceRoot, server); err != nil {
+		a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("Failed to reconnect to %s", name)}
+		return
+	}
+	a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("Successfully reconnected to %s", name)}
+}
+
+func (a *Application) reconnectMCPServer(ctx context.Context, workspaceRoot string, server runtimemcp.ScopedServer) error {
+	manager, _ := a.mcpCommandManager(workspaceRoot)
+	if err := manager.Connect(ctx, server); err != nil {
+		return err
+	}
+	defs, err := manager.ListTools(ctx, server.Name)
+	if err != nil {
+		return err
+	}
+	unregisterMCPServerTools(a.toolRegistry, server.Name)
+	artifactStore, err := newMCPArtifactStore(workspaceRoot)
+	if err != nil {
+		return err
+	}
+	registerMCPToolDefinitions(a.toolRegistry, manager, normalizeMCPToolDefinitions(server, defs), nil, artifactStore)
+	return nil
+}
+
+func (a *Application) cmdMCPToggle(enable bool, target string) {
+	name := strings.TrimSpace(target)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	resolved, workspaceRoot, err := a.resolveMCPForCommand(ctx)
+	if err != nil {
+		a.emitMCPCommandError("mcp", err)
+		return
+	}
+
+	if name != "" {
+		a.cmdMCPToggleOne(ctx, workspaceRoot, resolved, enable, name)
+		return
+	}
+
+	var targets []runtimemcp.ScopedServer
+	if enable {
+		targets = resolved.Disabled
+	} else {
+		targets = resolved.Servers
+	}
+	if len(targets) == 0 {
+		state := "disabled"
+		if enable {
+			state = "enabled"
+		}
+		a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("All MCP servers are already %s", state)}
+		return
+	}
+	enabledCount := 0
+	skippedCount := 0
+	for _, server := range targets {
+		if enable {
+			if _, enabled, err := a.enableDisabledMCPServer(ctx, workspaceRoot, server); err != nil {
+				a.emitMCPCommandError("mcp", err)
+				return
+			} else if !enabled {
+				skippedCount++
+				continue
+			}
+			enabledCount++
+			continue
+		}
+		if _, err := runtimemcp.SetLocalServerDisabled(workspaceRoot, server.Name, true); err != nil {
+			a.emitMCPCommandError("mcp", err)
+			return
+		}
+		if !enable && a.mcpManager != nil {
+			_ = a.mcpManager.CloseServer(ctx, server.Name)
+		}
+		if !enable {
+			unregisterMCPServerTools(a.toolRegistry, server.Name)
+		}
+	}
+	action := "Disabled"
+	count := len(targets)
+	if enable {
+		action = "Enabled"
+		count = enabledCount
+	}
+	message := fmt.Sprintf("%s %d MCP server(s)", action, count)
+	if enable && skippedCount > 0 {
+		message = fmt.Sprintf("%s, skipped %d", message, skippedCount)
+	}
+	a.EventCh <- model.Event{Type: model.AgentReply, Message: message}
+}
+
+func (a *Application) cmdMCPToggleOne(ctx context.Context, workspaceRoot string, resolved runtimemcp.ResolvedConfig, enable bool, name string) {
+	if server, ok := findMCPServer(resolved.Disabled, name); ok {
+		if enable {
+			message, _, err := a.enableDisabledMCPServer(ctx, workspaceRoot, server)
+			if err != nil {
+				a.emitMCPCommandError("mcp", err)
+				return
+			}
+			a.EventCh <- model.Event{Type: model.AgentReply, Message: message}
+			return
+		}
+		a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("MCP server %q disabled", name)}
+		return
+	}
+	if server, ok := findMCPServer(resolved.Servers, name); ok {
+		if !enable {
+			if _, err := runtimemcp.SetLocalServerDisabled(workspaceRoot, server.Name, true); err != nil {
+				a.emitMCPCommandError("mcp", err)
+				return
+			}
+			if a.mcpManager != nil {
+				_ = a.mcpManager.CloseServer(ctx, server.Name)
+			}
+			unregisterMCPServerTools(a.toolRegistry, server.Name)
+		}
+		state := "enabled"
+		if !enable {
+			state = "disabled"
+		}
+		a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("MCP server %q %s", name, state)}
+		return
+	}
+	if server, ok := findMCPServer(resolved.Pending, name); ok {
+		if enable {
+			a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("MCP server %q is pending approval; approve it before enabling", name)}
+			return
+		}
+		if _, err := runtimemcp.SetLocalServerDisabled(workspaceRoot, server.Name, true); err != nil {
+			a.emitMCPCommandError("mcp", err)
+			return
+		}
+		a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("MCP server %q disabled", name)}
+		return
+	}
+	if server, ok := findMCPServer(resolved.Rejected, name); ok {
+		if enable {
+			a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("MCP server %q is rejected; reset project choices or change approval before enabling", name)}
+			return
+		}
+		if _, err := runtimemcp.SetLocalServerDisabled(workspaceRoot, server.Name, true); err != nil {
+			a.emitMCPCommandError("mcp", err)
+			return
+		}
+		a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("MCP server %q disabled", name)}
+		return
+	}
+	a.EventCh <- model.Event{Type: model.AgentReply, Message: fmt.Sprintf("MCP server %q not found", name)}
+}
+
+func (a *Application) enableDisabledMCPServer(ctx context.Context, workspaceRoot string, server runtimemcp.ScopedServer) (string, bool, error) {
+	if _, err := runtimemcp.SetLocalServerDisabled(workspaceRoot, server.Name, false); err != nil {
+		return "", false, err
+	}
+	restoreDisabled := func() error {
+		_, err := runtimemcp.SetLocalServerDisabled(workspaceRoot, server.Name, true)
+		return err
+	}
+	refreshed, _, err := a.resolveMCPForCommand(ctx)
+	if err != nil {
+		if restoreErr := restoreDisabled(); restoreErr != nil {
+			return "", false, fmt.Errorf("restore mcp server %q disabled state: %w", server.Name, restoreErr)
+		}
+		return "", false, err
+	}
+	if server, ok := findMCPServer(refreshed.Pending, server.Name); ok {
+		if err := restoreDisabled(); err != nil {
+			return "", false, fmt.Errorf("restore mcp server %q disabled state: %w", server.Name, err)
+		}
+		return fmt.Sprintf("MCP server %q is pending approval; approve it before enabling", server.Name), false, nil
+	}
+	if server, ok := findMCPServer(refreshed.Rejected, server.Name); ok {
+		if err := restoreDisabled(); err != nil {
+			return "", false, fmt.Errorf("restore mcp server %q disabled state: %w", server.Name, err)
+		}
+		return fmt.Sprintf("MCP server %q is rejected; reset project choices or change approval before enabling", server.Name), false, nil
+	}
+	active, ok := findMCPServer(refreshed.Servers, server.Name)
+	if !ok {
+		if err := restoreDisabled(); err != nil {
+			return "", false, fmt.Errorf("restore mcp server %q disabled state: %w", server.Name, err)
+		}
+		return fmt.Sprintf("MCP server %q not found", server.Name), false, nil
+	}
+	if err := a.reconnectMCPServer(ctx, workspaceRoot, active); err != nil {
+		if restoreErr := restoreDisabled(); restoreErr != nil {
+			return "", false, fmt.Errorf("restore mcp server %q disabled state: %w", server.Name, restoreErr)
+		}
+		return fmt.Sprintf("MCP server %q failed to reconnect after enable: %v", server.Name, err), false, nil
+	}
+	return fmt.Sprintf("MCP server %q enabled", server.Name), true, nil
+}
+
+func (a *Application) resolveMCPForCommand(ctx context.Context) (runtimemcp.ResolvedConfig, string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return runtimemcp.ResolvedConfig{}, "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	workspace := strings.TrimSpace(a.WorkDir)
+	if workspace == "" {
+		workspace, err = os.Getwd()
+		if err != nil {
+			return runtimemcp.ResolvedConfig{}, "", fmt.Errorf("resolve workspace: %w", err)
+		}
+	}
+	workspaceAbs, err := filepath.Abs(workspace)
+	if err != nil {
+		return runtimemcp.ResolvedConfig{}, "", fmt.Errorf("resolve workspace path: %w", err)
+	}
+	resolved, err := resolveMCPConfig(ctx, runtimemcp.ResolveOptions{
+		HomeDir:       home,
+		WorkspaceRoot: workspaceAbs,
+		ApprovalStore: runtimemcp.NewApprovalStore(runtimemcp.DefaultApprovalStorePath(home)),
+	})
+	if err != nil {
+		return runtimemcp.ResolvedConfig{}, "", err
+	}
+	return resolved, workspaceAbs, nil
+}
+
+func (a *Application) mcpCommandManager(workspaceRoot string) (runtimemcp.Manager, bool) {
+	if a.mcpManager != nil {
+		return a.mcpManager, false
+	}
+	timeout := time.Second * 30
+	if a.Config != nil && a.Config.Execution.TimeoutSec > 0 {
+		timeout = time.Duration(a.Config.Execution.TimeoutSec) * time.Second
+	}
+	a.mcpManager = newMCPManager(runtimemcp.Config{
+		WorkDir:        workspaceRoot,
+		ConnectTimeout: 10 * time.Second,
+		CallTimeout:    timeout,
+	})
+	return a.mcpManager, false
+}
+
+func findMCPServer(servers []runtimemcp.ScopedServer, name string) (runtimemcp.ScopedServer, bool) {
+	for _, server := range servers {
+		if server.Name == name {
+			return server, true
+		}
+	}
+	return runtimemcp.ScopedServer{}, false
+}
+
+func containsMCPServer(servers []runtimemcp.ScopedServer, name string) bool {
+	_, ok := findMCPServer(servers, name)
+	return ok
+}
+
+func (a *Application) emitMCPCommandError(tool string, err error) {
+	a.EventCh <- model.Event{Type: model.ToolError, ToolName: tool, Message: err.Error()}
 }
 
 func (a *Application) handleRawSkillCommand(rawInput string) error {

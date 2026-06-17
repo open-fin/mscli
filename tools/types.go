@@ -39,6 +39,9 @@ type ToolMetadata struct {
 	Classes []ToolClass
 }
 
+// Tools can optionally implement CapabilityProvider to describe runtime
+// behavior such as mutability, streaming support, and external access.
+
 // StreamEventType describes an incremental execution update from a streaming tool.
 type StreamEventType string
 
@@ -76,10 +79,10 @@ type ConcurrencySafeTool interface {
 
 // Result is the result of a tool execution.
 type Result struct {
-	Content string // Main output content
-	Summary string // Summary for UI display (e.g., "42 lines", "5 matches")
-	Meta    map[string]any
-	Error   error // Execution error
+	Content string         // Main output content
+	Summary string         // Summary for UI display (e.g., "42 lines", "5 matches")
+	Meta    map[string]any // Optional structured result metadata.
+	Error   error          // Execution error
 }
 
 // StringResult creates a result with just content.

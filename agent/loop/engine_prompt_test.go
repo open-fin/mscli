@@ -14,4 +14,7 @@ func TestDefaultSystemPromptIncludesWriteArgumentValidationRules(t *testing.T) {
 	if !strings.Contains(prompt, "Never call write with empty JSON arguments ({})") {
 		t.Fatalf("DefaultSystemPrompt() missing empty-args guard: %q", prompt)
 	}
+	if !strings.Contains(prompt, "Additional MCP tools may be available with names beginning mcp__") {
+		t.Fatalf("DefaultSystemPrompt() missing MCP tool guidance: %q", prompt)
+	}
 }

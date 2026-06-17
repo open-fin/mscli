@@ -37,6 +37,59 @@ func TestShellToolExecute_DoesNotDuplicateCommandOrExit0InContent(t *testing.T) 
 	if strings.TrimSpace(result.Summary) == "exit 0" {
 		t.Fatalf("expected summary not to be 'exit 0'")
 	}
+	if got := result.Meta[tools.MetaSource]; got != tools.SourceShell {
+		t.Fatalf("source meta = %#v, want %q", got, tools.SourceShell)
+	}
+	if got := result.Meta[tools.MetaExitCode]; got != 0 {
+		t.Fatalf("exit code meta = %#v, want 0", got)
+	}
+	if got := result.Meta[tools.MetaTruncated]; got != false {
+		t.Fatalf("truncated meta = %#v, want false", got)
+	}
+}
+
+func TestShellToolExecute_NonzeroExitSetsFailedStatus(t *testing.T) {
+	runner := rshell.NewRunner(rshell.Config{
+		WorkDir: ".",
+		Timeout: 2 * time.Second,
+	})
+	tool := NewShellTool(runner)
+
+	result, err := tool.Execute(context.Background(), []byte(`{"command":"printf 'nope\\n' >&2; exit 7"}`))
+	if err != nil {
+		t.Fatalf("execute shell tool: %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("unexpected result error: %v", result.Error)
+	}
+	if got, want := result.Summary, "exit 7"; got != want {
+		t.Fatalf("summary = %q, want %q", got, want)
+	}
+	if got := result.Meta[tools.MetaStatus]; got != tools.StatusFailed {
+		t.Fatalf("status meta = %#v, want failed (meta %#v)", got, result.Meta)
+	}
+	if got := result.Meta[tools.MetaExitCode]; got != 7 {
+		t.Fatalf("exit code meta = %#v, want 7", got)
+	}
+}
+
+func TestShellToolExecute_ToolTimeoutSetsInterruptedStatus(t *testing.T) {
+	runner := rshell.NewRunner(rshell.Config{
+		WorkDir: ".",
+		Timeout: 5 * time.Second,
+	})
+	tool := NewShellTool(runner)
+
+	result, err := tool.Execute(context.Background(), []byte(`{"command":"sleep 2","timeout":1}`))
+	if err != nil {
+		t.Fatalf("execute shell tool: %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("unexpected result error: %v", result.Error)
+	}
+	if got := result.Meta[tools.MetaStatus]; got != tools.StatusInterrupted {
+		t.Fatalf("status meta = %#v, want interrupted (summary %q, meta %#v)", got, result.Summary, result.Meta)
+	}
 }
 
 func TestShellToolExecuteStream_EmitsStartedAndOutput(t *testing.T) {
