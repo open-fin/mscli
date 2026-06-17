@@ -1,7 +1,6 @@
 package app
 
 import (
-	"gitcode.com/mindspore/mscli/agent/loop"
 	"gitcode.com/mindspore/mscli/integrations/skills"
 	"gitcode.com/mindspore/mscli/ui/slash"
 )
