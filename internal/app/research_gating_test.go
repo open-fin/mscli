@@ -23,7 +23,7 @@ func TestRunTaskPromptsForExplicitDecisionAfterMaxIterations(t *testing.T) {
 	if !app.pendingMaxIterationDecision {
 		t.Fatal("pendingMaxIterationDecision = false, want true after max-iteration failure")
 	}
-	if !eventsContain(app.EventCh, "Continue", "Write now", "Stop") {
+	if !researchEventsContain(app.EventCh, "Continue", "Write now", "Stop") {
 		t.Fatal("event stream does not contain explicit Continue / Write now / Stop prompt")
 	}
 }
@@ -67,10 +67,10 @@ func TestMaxIterationDecisionWriteNowDisablesResearchTools(t *testing.T) {
 		t.Fatalf("write-now request messages = %#v, want research-disabled guidance", provider.requests[1].Messages)
 	}
 	toolNames := completionToolNames(provider.requests[1].Tools)
-	if containsString(toolNames, "read") {
+	if researchContainsString(toolNames, "read") {
 		t.Fatalf("write-now tools = %v, want read filtered", toolNames)
 	}
-	if !containsString(toolNames, "write") {
+	if !researchContainsString(toolNames, "write") {
 		t.Fatalf("write-now tools = %v, want write retained", toolNames)
 	}
 	if app.pendingMaxIterationDecision {
@@ -91,7 +91,7 @@ func TestMaxIterationDecisionStopClearsPendingWithoutFollowup(t *testing.T) {
 	if len(provider.requests) != 1 {
 		t.Fatalf("provider requests = %d, want no follow-up request", len(provider.requests))
 	}
-	if !eventsContain(app.EventCh, "Stopped", "context is preserved") {
+	if !researchEventsContain(app.EventCh, "Stopped", "context is preserved") {
 		t.Fatal("event stream does not contain Stop confirmation")
 	}
 }
@@ -109,7 +109,7 @@ func TestMaxIterationDecisionRejectsImplicitIntent(t *testing.T) {
 	if len(provider.requests) != 1 {
 		t.Fatalf("provider requests = %d, want no implicit follow-up request", len(provider.requests))
 	}
-	if !eventsContain(app.EventCh, "Please choose Continue, Write now, or Stop") {
+	if !researchEventsContain(app.EventCh, "Please choose Continue, Write now, or Stop") {
 		t.Fatal("event stream does not contain explicit-choice retry prompt")
 	}
 }
@@ -153,7 +153,7 @@ func waitForRequests(t *testing.T, provider *captureTaskProvider, want int) {
 	t.Fatalf("provider requests = %d, want at least %d", len(provider.requests), want)
 }
 
-func eventsContain(ch <-chan model.Event, parts ...string) bool {
+func researchEventsContain(ch <-chan model.Event, parts ...string) bool {
 	for {
 		select {
 		case ev := <-ch:
@@ -181,7 +181,7 @@ func completionToolNames(tools []llm.Tool) []string {
 	return names
 }
 
-func containsString(values []string, target string) bool {
+func researchContainsString(values []string, target string) bool {
 	for _, value := range values {
 		if value == target {
 			return true

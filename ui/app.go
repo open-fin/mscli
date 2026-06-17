@@ -9,11 +9,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
 	"gitcode.com/mindspore/mscli/ui/components"
 	"gitcode.com/mindspore/mscli/ui/model"
 	"gitcode.com/mindspore/mscli/ui/panels"
 	"gitcode.com/mindspore/mscli/ui/theme"
+	"github.com/charmbracelet/lipgloss"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -1440,8 +1440,14 @@ func (a App) handleEvent(ev model.Event) (tea.Model, tea.Cmd) {
 		stats.Errors++
 		a.state = a.state.WithStats(stats)
 		a.state = a.resolveToolEvent(ev, model.Message{
-			Kind: model.MsgTool, ToolName: displayToolName(ev.ToolName), ToolArgs: ev.Message,
-			Display: model.DisplayError, Content: ev.Message,
+			Kind:       model.MsgTool,
+			ToolName:   displayToolName(ev.ToolName),
+			ToolCallID: ev.ToolCallID,
+			ToolArgs:   ev.Message,
+			Display:    model.DisplayError,
+			Content:    ev.Message,
+			Summary:    ev.Summary,
+			Meta:       ev.Meta,
 		})
 
 	case model.ToolReplay:
@@ -2918,11 +2924,27 @@ func displayToolName(name string) string {
 	case "load_skill":
 		return "Skill"
 	default:
+		if server, tool, ok := splitMCPToolName(name); ok {
+			return server + " - " + tool + " (MCP)"
+		}
 		if name == "" {
 			return "Tool"
 		}
 		return name
 	}
+}
+
+func splitMCPToolName(name string) (string, string, bool) {
+	name = strings.TrimSpace(name)
+	const prefix = "mcp__"
+	if !strings.HasPrefix(name, prefix) {
+		return "", "", false
+	}
+	parts := strings.SplitN(strings.TrimPrefix(name, prefix), "__", 2)
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
 }
 
 func replayToolMessage(ev model.Event) model.Message {
@@ -2943,6 +2965,8 @@ func replayToolMessage(ev model.Event) model.Message {
 		ToolCallID: ev.ToolCallID,
 		Display:    display,
 		Content:    content,
+		Summary:    ev.Summary,
+		Meta:       ev.Meta,
 	}
 }
 

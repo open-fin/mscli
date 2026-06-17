@@ -5,8 +5,9 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	"gitcode.com/mindspore/mscli/tools"
 	"gitcode.com/mindspore/mscli/ui/model"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestEnterStartsThinkingWaitImmediately(t *testing.T) {
@@ -87,6 +88,38 @@ func TestToolWarningClearsWaitState(t *testing.T) {
 	}
 }
 
+func TestToolErrorWithoutPendingMessagePreservesMetadata(t *testing.T) {
+	app := New(nil, nil, "test", ".", "", "demo-model", 4096)
+	app.bootActive = false
+
+	meta := map[string]any{
+		tools.MetaStatus: tools.StatusDeclined,
+		tools.MetaSource: tools.SourcePermission,
+	}
+	next, _ := app.handleEvent(model.Event{
+		Type:       model.ToolError,
+		ToolName:   "shell",
+		ToolCallID: "call_denied",
+		Message:    "Permission denied for tool: shell",
+		Meta:       meta,
+	})
+	app = next.(App)
+
+	if len(app.state.Messages) != 1 {
+		t.Fatalf("message count = %d, want 1", len(app.state.Messages))
+	}
+	got := app.state.Messages[0]
+	if got.Display != model.DisplayError {
+		t.Fatalf("display = %v, want error", got.Display)
+	}
+	if got.Meta[tools.MetaStatus] != tools.StatusDeclined {
+		t.Fatalf("status meta = %#v, want declined (meta %#v)", got.Meta[tools.MetaStatus], got.Meta)
+	}
+	if got.Meta[tools.MetaSource] != tools.SourcePermission {
+		t.Fatalf("source meta = %#v, want permission (meta %#v)", got.Meta[tools.MetaSource], got.Meta)
+	}
+}
+
 func TestReplayWaitFastForwardsElapsedTime(t *testing.T) {
 	app := New(nil, nil, "test", ".", "", "demo-model", 4096)
 	app.bootActive = false
@@ -124,6 +157,12 @@ func TestToolReplayResolvesHistoricalPendingShellByCallID(t *testing.T) {
 		ToolName:   "shell",
 		ToolCallID: "call_shell_1",
 		Message:    "done",
+		Summary:    "completed",
+		Meta: map[string]any{
+			tools.MetaStatus:   tools.StatusCompleted,
+			tools.MetaSource:   tools.SourceShell,
+			tools.MetaExitCode: 0,
+		},
 	})
 	app = next.(App)
 
@@ -138,5 +177,44 @@ func TestToolReplayResolvesHistoricalPendingShellByCallID(t *testing.T) {
 	}
 	if got, want := app.state.Messages[0].ToolArgs, "$ sleep 10"; got != want {
 		t.Fatalf("tool args = %q, want %q", got, want)
+	}
+	if got, want := app.state.Messages[0].Summary, "completed"; got != want {
+		t.Fatalf("summary = %q, want %q", got, want)
+	}
+	if got := app.state.Messages[0].Meta[tools.MetaStatus]; got != tools.StatusCompleted {
+		t.Fatalf("status meta = %#v, want completed (meta %#v)", got, app.state.Messages[0].Meta)
+	}
+}
+
+func TestToolReplayWithoutPendingMessagePreservesMetadataAndSummary(t *testing.T) {
+	app := New(nil, nil, "test", ".", "", "demo-model", 4096)
+	app.bootActive = false
+
+	next, _ := app.handleEvent(model.Event{
+		Type:       model.ToolReplay,
+		ToolName:   "shell",
+		ToolCallID: "call_shell_replay",
+		Message:    "failed",
+		Summary:    "exit 2",
+		Meta: map[string]any{
+			tools.MetaStatus:   tools.StatusFailed,
+			tools.MetaSource:   tools.SourceShell,
+			tools.MetaExitCode: 2,
+		},
+	})
+	app = next.(App)
+
+	if len(app.state.Messages) != 1 {
+		t.Fatalf("message count = %d, want 1", len(app.state.Messages))
+	}
+	got := app.state.Messages[0]
+	if got.Summary != "exit 2" {
+		t.Fatalf("summary = %q, want exit 2", got.Summary)
+	}
+	if got.Meta[tools.MetaStatus] != tools.StatusFailed {
+		t.Fatalf("status meta = %#v, want failed (meta %#v)", got.Meta[tools.MetaStatus], got.Meta)
+	}
+	if got.Meta[tools.MetaExitCode] != 2 {
+		t.Fatalf("exit code meta = %#v, want 2 (meta %#v)", got.Meta[tools.MetaExitCode], got.Meta)
 	}
 }

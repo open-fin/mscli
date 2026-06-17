@@ -117,6 +117,33 @@ func TestPermissionPromptUI_RequestPermissionOffersYOLOWhenDisabled(t *testing.T
 	}
 }
 
+func TestPermissionPromptUIFormatsMCPToolNameForDisplay(t *testing.T) {
+	eventCh := make(chan model.Event, 1)
+	ui := NewPermissionPromptUI(eventCh)
+
+	done := make(chan struct{})
+	go func() {
+		_, _, _ = ui.RequestPermission("mcp__deepwiki__ask_question", `{"repoName":"mindspore-lab/mindone"}`, "")
+		close(done)
+	}()
+
+	ev := <-eventCh
+	if ev.Permission == nil {
+		t.Fatal("Permission data = nil")
+	}
+	if strings.Contains(ev.Permission.Message, "mcp__deepwiki__ask_question") {
+		t.Fatalf("message leaked raw MCP tool name: %q", ev.Permission.Message)
+	}
+	if !strings.Contains(ev.Permission.Message, "deepwiki - ask_question (MCP)") {
+		t.Fatalf("message missing formatted MCP tool name: %q", ev.Permission.Message)
+	}
+
+	if !ui.HandleInput("3") {
+		t.Fatal("HandleInput did not consume rejection")
+	}
+	<-done
+}
+
 func TestPermissionPromptUI_SelectYOLOEnablesAndGrants(t *testing.T) {
 	eventCh := make(chan model.Event, 4)
 	ui := NewPermissionPromptUI(eventCh)

@@ -42,3 +42,13 @@ func TestSuggestionsIncludeFactoryForFPrefix(t *testing.T) {
 	}
 	t.Fatalf("Suggestions(/f) = %#v, want /factory", suggestions)
 }
+
+func TestDefaultRegistryIncludesMCP(t *testing.T) {
+	cmd, ok := NewRegistry().Get("/mcp")
+	if !ok {
+		t.Fatal("registry missing /mcp")
+	}
+	if cmd.Usage == "" || cmd.Description == "" {
+		t.Fatalf("/mcp command missing usage or description: %#v", cmd)
+	}
+}

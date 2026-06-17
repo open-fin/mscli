@@ -285,6 +285,11 @@ func (r *Registry) registerDefaults() {
 		Usage:       "/preflight [description]",
 	})
 
+	r.Register(Command{
+		Name:        "/mcp",
+		Description: "Show and manage MCP servers",
+		Usage:       "/mcp [reconnect <server>|enable [server]|disable [server]]",
+	})
 }
 
 // DefaultRegistry is the global slash command registry.
