@@ -179,6 +179,12 @@ func (a *Application) loadConversation(target string, replay bool) (*loadedConve
 	}
 
 	systemPrompt, messages := runtimeSession.RestoreContext()
+	if !replay {
+		systemPrompt, err = a.rebuildSystemPrompt()
+		if err != nil {
+			return nil, err
+		}
+	}
 	loaded := &loadedConversation{
 		runtimeSession: runtimeSession,
 		systemPrompt:   systemPrompt,

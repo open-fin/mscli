@@ -37,6 +37,7 @@ func (c *openAIResponsesCodec) encodeRequest(req *CompletionRequest, stream bool
 		Input:              input,
 		Instructions:       instructions,
 		Tools:              encodedTools,
+		Reasoning:          openAIReasoningConfigForEffort(req.Effort),
 		Temperature:        req.Temperature,
 		MaxOutputTokens:    req.MaxTokens,
 		TopP:               req.TopP,
@@ -76,11 +77,11 @@ func (c *openAIResponsesCodec) encodeMessages(msgs []Message, allowOrphanToolOut
 				Output: msg.Content,
 			})
 		default:
-			if text := strings.TrimSpace(msg.Content); text != "" {
+			if hasMessageContent(msg) {
 				items = append(items, openAIResponsesInputItem{
 					Type:    "message",
 					Role:    msg.Role,
-					Content: msg.Content,
+					Content: encodeOpenAIResponsesMessageContent(msg),
 				})
 			}
 			for _, call := range msg.ToolCalls {
@@ -100,6 +101,47 @@ func (c *openAIResponsesCodec) encodeMessages(msgs []Message, allowOrphanToolOut
 	}
 
 	return strings.Join(systemParts, "\n\n"), items
+}
+
+func hasMessageContent(msg Message) bool {
+	if strings.TrimSpace(msg.Content) != "" {
+		return true
+	}
+	for _, part := range msg.ContentParts {
+		if part.Type == "" || part.Type == "text" {
+			if strings.TrimSpace(part.Text) != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func encodeOpenAIResponsesMessageContent(msg Message) any {
+	if len(msg.ContentParts) == 0 {
+		return msg.Content
+	}
+	partType := "input_text"
+	if msg.Role == "assistant" {
+		partType = "output_text"
+	}
+	parts := make([]openAIResponsesMessageContentPart, 0, len(msg.ContentParts))
+	for _, part := range msg.ContentParts {
+		if part.Type != "" && part.Type != "text" {
+			continue
+		}
+		if part.Text == "" {
+			continue
+		}
+		parts = append(parts, openAIResponsesMessageContentPart{
+			Type: partType,
+			Text: part.Text,
+		})
+	}
+	if len(parts) == 0 {
+		return msg.Content
+	}
+	return parts
 }
 
 func (c *openAIResponsesCodec) encodeTools(tools []Tool) []openAIResponsesTool {
@@ -181,11 +223,24 @@ type openAIResponsesRequest struct {
 	Input              []openAIResponsesInputItem `json:"input,omitempty"`
 	Instructions       string                     `json:"instructions,omitempty"`
 	Tools              []openAIResponsesTool      `json:"tools,omitempty"`
+	Reasoning          *openAIReasoningConfig     `json:"reasoning,omitempty"`
 	Temperature        *float32                   `json:"temperature,omitempty"`
 	MaxOutputTokens    *int                       `json:"max_output_tokens,omitempty"`
 	TopP               float32                    `json:"top_p,omitempty"`
 	PreviousResponseID string                     `json:"previous_response_id,omitempty"`
 	Stream             bool                       `json:"stream,omitempty"`
+}
+
+type openAIReasoningConfig struct {
+	Effort string `json:"effort,omitempty"`
+}
+
+func openAIReasoningConfigForEffort(effort string) *openAIReasoningConfig {
+	effort = strings.ToLower(strings.TrimSpace(effort))
+	if effort == "" {
+		return nil
+	}
+	return &openAIReasoningConfig{Effort: effort}
 }
 
 type openAIResponsesInputItem struct {
@@ -196,6 +251,11 @@ type openAIResponsesInputItem struct {
 	Name      string `json:"name,omitempty"`
 	Arguments string `json:"arguments,omitempty"`
 	Output    string `json:"output,omitempty"`
+}
+
+type openAIResponsesMessageContentPart struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
 }
 
 type openAIResponsesTool struct {

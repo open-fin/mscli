@@ -23,6 +23,7 @@ type EngineConfig struct {
 	ContextWindow  int
 	MaxTokens      *int
 	Temperature    *float32
+	Effort         string
 	TimeoutPerTurn time.Duration
 	SystemPrompt   string
 }
@@ -118,6 +119,11 @@ func (e *Engine) SetLLMDebugDumper(dumper *llm.DebugDumper) {
 	}
 }
 
+// SetEffort updates the reasoning effort sent with future LLM requests.
+func (e *Engine) SetEffort(effort string) {
+	e.config.Effort = strings.ToLower(strings.TrimSpace(effort))
+}
+
 // ToolNames returns the names of registered tools.
 func (e *Engine) ToolNames() []string {
 	toolList := e.tools.List()
@@ -177,13 +183,30 @@ type contextCompactionNotice struct {
 const ContextCompactStartMessage = "compacting conversation..."
 
 func (ex *executor) run(ctx context.Context) ([]Event, error) {
-	notice, err := ex.addContextMessage(ctx, llm.NewUserMessage(ex.task.Description))
+	for _, msg := range ex.task.InitialMessages {
+		notice, err := ex.addContextMessage(ctx, msg)
+		if err != nil {
+			ex.addEvent(NewEvent(EventTaskFailed, fmt.Sprintf("Persist message error: %v", err)))
+			return ex.events, err
+		}
+		if err := ex.persistSnapshot(); err != nil {
+			ex.addEvent(NewEvent(EventTaskFailed, fmt.Sprintf("Persist snapshot error: %v", err)))
+			return ex.events, err
+		}
+		if err := ex.emitContextCompactionNotice(notice); err != nil {
+			ex.addEvent(NewEvent(EventTaskFailed, err.Error()))
+			return ex.events, err
+		}
+	}
+
+	userMessage := ex.task.userMessageContent()
+	notice, err := ex.addContextMessage(ctx, llm.NewUserMessage(userMessage))
 	if err != nil {
 		ex.addEvent(NewEvent(EventTaskFailed, fmt.Sprintf("Persist message error: %v", err)))
 		return ex.events, err
 	}
 	if ex.engine.recorder != nil && ex.engine.recorder.RecordUserInput != nil {
-		if err := ex.engine.recorder.RecordUserInput(ex.task.Description); err != nil {
+		if err := ex.engine.recorder.RecordUserInput(userMessage); err != nil {
 			ex.addEvent(NewEvent(EventTaskFailed, fmt.Sprintf("Persist message error: %v", err)))
 			return ex.events, err
 		}
@@ -240,6 +263,13 @@ func (ex *executor) run(ctx context.Context) ([]Event, error) {
 	return ex.events, nil
 }
 
+func (t Task) userMessageContent() string {
+	if strings.TrimSpace(t.UserMessage) != "" {
+		return t.UserMessage
+	}
+	return t.Description
+}
+
 func (ex *executor) callLLM(ctx context.Context) (*llm.CompletionResponse, error) {
 	timeout := ex.engine.config.TimeoutPerTurn
 	if timeout == 0 {
@@ -256,6 +286,7 @@ func (ex *executor) callLLM(ctx context.Context) (*llm.CompletionResponse, error
 		Tools:       ex.filteredTools(),
 		Temperature: ex.engine.config.Temperature,
 		MaxTokens:   ex.engine.config.MaxTokens,
+		Effort:      ex.engine.config.Effort,
 	}
 
 	if ex.usesResponsesChain() && ex.responsesPreviousID != "" {
@@ -546,7 +577,6 @@ func (ex *executor) executeToolCall(ctx context.Context, tc llm.ToolCall) error 
 
 	// Execute
 	var result *tools.Result
-	var err error
 	toolStart := time.Now()
 	result, err = ex.executeTool(ctx, tool, toolName, tc.ID, tc.Function.Arguments)
 	toolDuration := time.Since(toolStart)
@@ -719,14 +749,14 @@ func (ex *executor) handlePathDenial(ctx context.Context, tc llm.ToolCall, tool 
 			return true, context.Canceled
 		}
 		errMsg := fmt.Sprintf("Tool execution error: %v", err)
-		notice, addErr := ex.addToolResultWithFallback(ctx, tc.ID, errMsg, nil)
+		write, addErr := ex.addToolResultWithFallback(ctx, tc.ID, errMsg, nil)
 		if addErr != nil {
 			return true, addErr
 		}
 		if persistErr := ex.persistSnapshot(); persistErr != nil {
 			return true, persistErr
 		}
-		if noticeErr := ex.emitContextCompactionNotice(notice); noticeErr != nil {
+		if noticeErr := ex.emitContextCompactionNotice(write.Notice); noticeErr != nil {
 			return true, noticeErr
 		}
 		ex.addEvent(NewEvent(EventToolError, errMsg))
@@ -748,14 +778,14 @@ func (ex *executor) addPathAuthorizationDeniedResult(ctx context.Context, tc llm
 	if denial != nil {
 		message = denial.ErrorMessage()
 	}
-	notice, err := ex.addToolResultWithFallback(ctx, tc.ID, message, nil)
+	write, err := ex.addToolResultWithFallback(ctx, tc.ID, message, nil)
 	if err != nil {
 		return err
 	}
 	if err := ex.persistSnapshot(); err != nil {
 		return err
 	}
-	if err := ex.emitContextCompactionNotice(notice); err != nil {
+	if err := ex.emitContextCompactionNotice(write.Notice); err != nil {
 		return err
 	}
 	ev := NewEvent(EventToolError, fmt.Sprintf("Tool %s failed: %s", toolName, message))

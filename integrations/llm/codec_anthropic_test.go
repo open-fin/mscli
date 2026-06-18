@@ -41,6 +41,51 @@ func TestAnthropicEncodeRequestPreservesExplicitMaxTokens(t *testing.T) {
 	}
 }
 
+func TestAnthropicEncodeRequestIncludesOutputEffort(t *testing.T) {
+	req, err := newAnthropicCodec("claude-test").encodeRequest(&CompletionRequest{
+		Messages: []Message{{Role: "user", Content: "ping"}},
+		Effort:   "max",
+	}, false)
+	if err != nil {
+		t.Fatalf("encodeRequest() error = %v", err)
+	}
+
+	if req.OutputConfig == nil {
+		t.Fatal("req.OutputConfig = nil, want effort config")
+	}
+	if got, want := req.OutputConfig.Effort, "max"; got != want {
+		t.Fatalf("req.OutputConfig.Effort = %q, want %q", got, want)
+	}
+}
+
+func TestAnthropicEncodeRequestUsesStructuredTextParts(t *testing.T) {
+	req, err := newAnthropicCodec("claude-test").encodeRequest(&CompletionRequest{
+		Messages: []Message{NewUserMessageParts([]MessageContentPart{
+			NewTextContentPart("memory context"),
+			NewTextContentPart("MSCLI.md context"),
+		})},
+	}, false)
+	if err != nil {
+		t.Fatalf("encodeRequest() error = %v", err)
+	}
+	if got, want := len(req.Messages), 1; got != want {
+		t.Fatalf("messages = %d, want %d", got, want)
+	}
+	blocks := req.Messages[0].Content
+	if got, want := len(blocks), 2; got != want {
+		t.Fatalf("content blocks = %d, want %d", got, want)
+	}
+	if got, want := blocks[0].Type, "text"; got != want {
+		t.Fatalf("blocks[0].Type = %q, want %q", got, want)
+	}
+	if got, want := blocks[0].Text, "memory context"; got != want {
+		t.Fatalf("blocks[0].Text = %q, want %q", got, want)
+	}
+	if got, want := blocks[1].Text, "MSCLI.md context"; got != want {
+		t.Fatalf("blocks[1].Text = %q, want %q", got, want)
+	}
+}
+
 func TestAnthropicStreamIteratorAccumulatesToolUseJSONWithoutBuilderCopyPanic(t *testing.T) {
 	stream := strings.Join([]string{
 		mustAnthropicSSEEvent(t, "message_start", anthropicStreamMessageStartEvent{

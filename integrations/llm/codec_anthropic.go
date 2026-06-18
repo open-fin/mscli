@@ -44,6 +44,7 @@ func (c *anthropicCodec) encodeRequest(req *CompletionRequest, stream bool) (ant
 		Model:         model,
 		System:        system,
 		Messages:      messages,
+		OutputConfig:  anthropicOutputConfigForEffort(req.Effort),
 		Temperature:   req.Temperature,
 		MaxTokens:     maxTokens,
 		TopP:          req.TopP,
@@ -80,7 +81,20 @@ func (c *anthropicCodec) encodeMessages(msgs []Message) (string, []anthropicMess
 
 func (c *anthropicCodec) encodeMessage(msg Message) (anthropicMessage, bool) {
 	content := make([]anthropicContentBlock, 0, 1+len(msg.ToolCalls))
-	if msg.Content != "" {
+	if len(msg.ContentParts) > 0 {
+		for _, part := range msg.ContentParts {
+			if part.Type != "" && part.Type != "text" {
+				continue
+			}
+			if part.Text == "" {
+				continue
+			}
+			content = append(content, anthropicContentBlock{
+				Type: "text",
+				Text: part.Text,
+			})
+		}
+	} else if msg.Content != "" {
 		content = append(content, anthropicContentBlock{
 			Type: "text",
 			Text: msg.Content,
@@ -209,15 +223,28 @@ func (c *anthropicCodec) newStreamIterator(body io.ReadCloser) StreamIterator {
 }
 
 type anthropicMessagesRequest struct {
-	Model         string             `json:"model"`
-	Messages      []anthropicMessage `json:"messages"`
-	System        string             `json:"system,omitempty"`
-	Temperature   *float32           `json:"temperature,omitempty"`
-	MaxTokens     *int               `json:"max_tokens,omitempty"`
-	TopP          float32            `json:"top_p,omitempty"`
-	StopSequences []string           `json:"stop_sequences,omitempty"`
-	Tools         []anthropicTool    `json:"tools,omitempty"`
-	Stream        bool               `json:"stream,omitempty"`
+	Model         string                 `json:"model"`
+	Messages      []anthropicMessage     `json:"messages"`
+	System        string                 `json:"system,omitempty"`
+	OutputConfig  *anthropicOutputConfig `json:"output_config,omitempty"`
+	Temperature   *float32               `json:"temperature,omitempty"`
+	MaxTokens     *int                   `json:"max_tokens,omitempty"`
+	TopP          float32                `json:"top_p,omitempty"`
+	StopSequences []string               `json:"stop_sequences,omitempty"`
+	Tools         []anthropicTool        `json:"tools,omitempty"`
+	Stream        bool                   `json:"stream,omitempty"`
+}
+
+type anthropicOutputConfig struct {
+	Effort string `json:"effort,omitempty"`
+}
+
+func anthropicOutputConfigForEffort(effort string) *anthropicOutputConfig {
+	effort = strings.ToLower(strings.TrimSpace(effort))
+	if effort == "" {
+		return nil
+	}
+	return &anthropicOutputConfig{Effort: effort}
 }
 
 type anthropicMessage struct {

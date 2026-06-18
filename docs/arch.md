@@ -27,7 +27,6 @@ mscli/
   agent/
     context/               context window management and compaction
     loop/                  ReAct-style execution engine (the core runtime)
-    memory/                memory store, retrieval, and policy
     session/               session state and persistence
   workflow/
     train/                 train lane controller, setup, run, demo backend
@@ -70,6 +69,8 @@ runTask:
   -> compose effective conversation context:
        EngineConfig.SystemPrompt
        + skill summaries (from integrations/skills)
+       + auto-memory operating instructions (from internal/app)
+       + separate initial user-role message with loaded MEMORY.md and MSCLI.md contents (from internal/app)
        + any skill content preloaded by /skill
   -> agent/loop.Engine.RunWithContext(task)
   -> tools.Registry
@@ -120,7 +121,9 @@ Free text uses the base system prompt which includes skill summaries
 
 - **`internal/app/`**
   Loads config, wires dependencies, starts the TUI, handles slash commands,
-  dispatches tasks to the engine, and converts `loop.Event` to `ui/model.Event`.
+  dispatches tasks to the engine, converts `loop.Event` to `ui/model.Event`,
+  owns auto-memory system-prompt instructions, and injects loaded `MEMORY.md`
+  and `MSCLI.md` contents into a separate initial user-role context message.
 
 - **`agent/loop/`**
   The core runtime. Runs the LLM/tool loop: tool calling, permission checks,
@@ -128,6 +131,9 @@ Free text uses the base system prompt which includes skill summaries
 
 - **`agent/session/`**
   Owns session state, trajectory persistence, and resume reconstruction.
+
+There is no `agent/memory` runtime package. Persistent memory is plain files
+under the app-selected memory directory and is accessed through `tools/fs`.
 
 - **`integrations/skills/`**
   Lists available skills, loads one skill fully on demand (`SKILL.md` + metadata).

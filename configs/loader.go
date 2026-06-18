@@ -71,6 +71,9 @@ func ApplyEnvOverrides(cfg *Config) {
 			cfg.Request.MaxIterations = &i
 		}
 	}
+	if v := strings.TrimSpace(os.Getenv("MSCLI_EFFORT")); v != "" {
+		cfg.Request.Effort = v
+	}
 	if v := os.Getenv("MSCLI_TIMEOUT"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil {
 			cfg.Model.TimeoutSec = i
@@ -122,15 +125,6 @@ func ApplyEnvOverrides(cfg *Config) {
 		refreshContextReserveDefaults(cfg, previousContextWindow)
 	}
 
-	// Memory settings
-	if v := os.Getenv("MSCLI_MEMORY_ENABLED"); v != "" {
-		if b, err := strconv.ParseBool(v); err == nil {
-			cfg.Memory.Enabled = b
-		}
-	}
-	if v := os.Getenv("MSCLI_MEMORY_PATH"); v != "" {
-		cfg.Memory.StorePath = v
-	}
 }
 
 func UserConfigPath() (string, error) {

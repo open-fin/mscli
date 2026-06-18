@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-func TestDefaultRegistryIncludesBranchAndFork(t *testing.T) {
+func TestDefaultRegistryIncludesExpectedVisibleCommands(t *testing.T) {
 	registry := NewRegistry()
 
-	for _, name := range []string{"/branch", "/fork"} {
+	for _, name := range []string{"/branch", "/effort", "/fork", "/init"} {
 		cmd, ok := registry.Get(name)
 		if !ok {
 			t.Fatalf("default registry missing %s", name)

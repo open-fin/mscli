@@ -64,6 +64,7 @@ type Application struct {
 	permissionSettingsIssue *permissionSettingsIssue
 	mcpManager              runtimemcp.Manager
 	session                 *session.Session
+	memoryConfig            autoMemoryConfig
 	replayBacklog           []model.Event
 	replayTimeline          []session.ReplayFrame
 	deferHistoryReplay      bool
@@ -187,7 +188,13 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 		}
 	}
 
+	memoryCfg, err := resolveAutoMemoryConfig(workDir)
+	if err != nil {
+		return nil, fmt.Errorf("init memory: %w", err)
+	}
+
 	pathPolicy := pathpolicy.NewPathPolicyWithWriteRoots(workDir, config.Filesystem.ExternalReadRoots, config.Filesystem.ExternalWriteRoots, fs.BuiltinReadRoots())
+	addMemoryPathRoot(pathPolicy, memoryCfg)
 	pathResolver := pathpolicy.NewResolver(pathPolicy)
 	toolRegistry := initTools(config, workDir, pathResolver)
 	var (
@@ -227,8 +234,10 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 	managerCfg.CompactProvider = provider
 	ctxManager := agentctx.NewManager(managerCfg)
 
-	// Build system prompt: base + skill summaries.
-	systemPrompt := buildSystemPrompt(skillLoader.List())
+	// Build system prompt: base + skill summaries + auto-memory operating
+	// instructions. Loaded MSCLI.md and MEMORY.md contents are injected into a
+	// separate initial user-role context message.
+	systemPrompt := buildEffectiveSystemPromptFromSummariesWithMemory(skillLoader.List(), memoryCfg)
 
 	var (
 		runtimeSession       *session.Session
@@ -279,6 +288,9 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 						return nil, fmt.Errorf("load %s %s: %w", targetLabel, sessionID, err)
 					}
 					systemPrompt, restoredMessages := runtimeSession.RestoreContext()
+					if !cfg.Replay {
+						systemPrompt = buildEffectiveSystemPromptFromSummariesWithMemory(skillLoader.List(), memoryCfg)
+					}
 					ctxManager.SetSystemPrompt(systemPrompt)
 					ctxManager.SetNonSystemMessages(restoredMessages)
 					restoreProviderUsageSnapshot(ctxManager, runtimeSession.UsageSnapshot())
@@ -293,7 +305,8 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 				if err != nil {
 					return nil, fmt.Errorf("load latest session: %w", err)
 				}
-				systemPrompt, restoredMessages := runtimeSession.RestoreContext()
+				_, restoredMessages := runtimeSession.RestoreContext()
+				systemPrompt = buildEffectiveSystemPromptFromSummariesWithMemory(skillLoader.List(), memoryCfg)
 				ctxManager.SetSystemPrompt(systemPrompt)
 				ctxManager.SetNonSystemMessages(restoredMessages)
 				restoreProviderUsageSnapshot(ctxManager, runtimeSession.UsageSnapshot())
@@ -375,6 +388,7 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 		permissionSettingsIssue: permSettingsIssue,
 		mcpManager:              mcpManager,
 		session:                 runtimeSession,
+		memoryConfig:            memoryCfg,
 		replayBacklog:           replayBacklog,
 		replayTimeline:          replayTimeline,
 		deferHistoryReplay:      cfg.Resume && !cfg.Replay && startupSessionPicker == nil,
@@ -490,7 +504,7 @@ func (a *Application) refreshEngineSessionBindings() {
 	}
 	a.Engine.SetLLMDebugDumper(a.llmDebugDumper)
 	a.Engine.SetPathAuthorizer(a.pathAuthorizer)
-	a.Engine.SetTrajectoryRecorder(newTrajectoryRecorder(a.session, a.ctxManager, a.WorkDir, a.pathResolver, a.noteLiveLLMActivity))
+	a.Engine.SetTrajectoryRecorder(newTrajectoryRecorder(a.session, a.ctxManager, a.WorkDir, a.pathResolver, a.memoryConfig, a.noteLiveLLMActivity))
 }
 
 func (a *Application) dumpPreCompactSnapshot(snapshot agentctx.CompactSnapshot) error {
@@ -545,7 +559,10 @@ func (a *Application) rotateSession() error {
 		return nil
 	}
 
-	systemPrompt := a.currentSystemPrompt()
+	systemPrompt, err := a.rebuildSystemPrompt()
+	if err != nil {
+		return fmt.Errorf("build system prompt: %w", err)
+	}
 	nextSession, err := session.Create(a.WorkDir, systemPrompt)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
@@ -558,6 +575,9 @@ func (a *Application) rotateSession() error {
 	a.session = nextSession
 	a.sessionLLMActivity.Store(false)
 	a.sessionStoreReady.Store(false)
+	if a.ctxManager != nil {
+		a.ctxManager.SetSystemPrompt(systemPrompt)
+	}
 
 	if permSvc, ok := a.permService.(*permission.DefaultPermissionService); ok {
 		permSvc.ResetSessionState()
@@ -652,7 +672,7 @@ func initProvider(cfg configs.ModelConfig, opts llm.ResolveOptions) (llm.Provide
 	return client, nil
 }
 
-func newTrajectoryRecorder(s *session.Session, cm *agentctx.Manager, workDir string, resolver *pathpolicy.Resolver, noteLiveLLMActivity func() error) *loop.TrajectoryRecorder {
+func newTrajectoryRecorder(s *session.Session, cm *agentctx.Manager, workDir string, resolver *pathpolicy.Resolver, memoryCfg autoMemoryConfig, noteLiveLLMActivity func() error) *loop.TrajectoryRecorder {
 	ensureSessionActive := func() error {
 		if noteLiveLLMActivity == nil {
 			return nil
@@ -737,6 +757,9 @@ func newTrajectoryRecorder(s *session.Session, cm *agentctx.Manager, workDir str
 			if denial != nil {
 				return nil
 			}
+			if memoryCfg.Enabled && pathWithinAppRoot(memoryCfg.Dir, fullPath) {
+				return nil
+			}
 			return s.RecordFileMutation(path, fullPath)
 		},
 		PersistSnapshot: func() error {
@@ -802,6 +825,7 @@ func newEngineConfig(cfg *configs.Config, systemPrompt string) loop.EngineConfig
 		ContextWindow:  cfg.Context.Window,
 		MaxTokens:      requestMaxTokensPtr(cfg.Request.MaxTokens),
 		Temperature:    requestTemperaturePtr(cfg.Request.Temperature),
+		Effort:         configs.NormalizeEffort(cfg.Request.Effort),
 		TimeoutPerTurn: time.Duration(cfg.Model.TimeoutSec) * time.Second,
 		SystemPrompt:   systemPrompt,
 	}
@@ -879,4 +903,32 @@ func initTools(cfg *configs.Config, workDir string, resolvers ...*pathpolicy.Res
 	registry.MustRegister(shell.NewShellTool(shellRunner, workDir))
 
 	return registry
+}
+
+func addMemoryPathRoot(policy *pathpolicy.PathPolicy, memoryCfg autoMemoryConfig) {
+	if policy == nil || !memoryCfg.Enabled || strings.TrimSpace(memoryCfg.Dir) == "" {
+		return
+	}
+	policy.AddSessionWriteRoot(memoryCfg.Dir)
+}
+
+func pathWithinAppRoot(root, target string) bool {
+	root = strings.TrimSpace(root)
+	target = strings.TrimSpace(target)
+	if root == "" || target == "" {
+		return false
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	targetAbs, err := filepath.Abs(target)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(filepath.Clean(rootAbs), filepath.Clean(targetAbs))
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
 }

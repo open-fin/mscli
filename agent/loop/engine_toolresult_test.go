@@ -18,7 +18,7 @@ func TestAddToolResultNormalizesEmptyContent(t *testing.T) {
 	engine := &Engine{ctxManager: cm}
 	ex := &executor{engine: engine}
 
-	if _, err := ex.addToolResultWithFallback(context.Background(), "call_empty", ""); err != nil {
+	if _, err := ex.addToolResultWithFallback(context.Background(), "call_empty", "", nil); err != nil {
 		t.Fatalf("addToolResultWithFallback returned error: %v", err)
 	}
 

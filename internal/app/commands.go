@@ -11,6 +11,7 @@ import (
 	"time"
 
 	agentctx "gitcode.com/mindspore/mscli/agent/context"
+	"gitcode.com/mindspore/mscli/configs"
 	"gitcode.com/mindspore/mscli/integrations/llm"
 	"gitcode.com/mindspore/mscli/internal/pathpolicy"
 	"gitcode.com/mindspore/mscli/permission"
@@ -28,12 +29,16 @@ func (a *Application) handleCommand(input string) {
 	switch cmd.Name {
 	case "/model":
 		a.cmdModel(args)
+	case "/effort":
+		a.cmdEffort(args)
 	case "/exit":
 		a.cmdExit()
 	case "/compact":
 		a.cmdCompact(cmd.Remainder)
 	case "/ctx":
 		a.cmdCtx()
+	case "/init":
+		a.cmdInit()
 	case "/clear":
 		a.cmdClear()
 	case "/branch", "/fork":
@@ -543,6 +548,65 @@ func (a *Application) handleSkillAliasCommand(commandName, rawRemainder string) 
 
 func (a *Application) cmdModel(args []string) {
 	a.emitModelSetupPopup(true)
+}
+
+func (a *Application) cmdEffort(args []string) {
+	if a.Config == nil {
+		a.Config = configs.DefaultConfig()
+	}
+	providerName := a.currentEffortProvider()
+	options := configs.EffortOptionsForProvider(providerName)
+	current := configs.NormalizeEffort(a.Config.Request.Effort)
+	if current == "" {
+		current = configs.DefaultRequestEffort
+	}
+
+	if len(args) == 0 {
+		a.EventCh <- model.Event{
+			Type:    model.AgentReply,
+			Message: fmt.Sprintf("Current effort: %s (provider: %s, options: %s)", current, providerName, strings.Join(options, ", ")),
+		}
+		return
+	}
+	if len(args) != 1 {
+		a.EventCh <- model.Event{
+			Type:    model.AgentReply,
+			Message: fmt.Sprintf("Usage: /effort <%s>", strings.Join(options, "|")),
+		}
+		return
+	}
+
+	effort := configs.NormalizeEffort(args[0])
+	if !configs.EffortAllowedForProvider(providerName, effort) {
+		a.EventCh <- model.Event{
+			Type:    model.AgentReply,
+			Message: fmt.Sprintf("Unsupported effort %q for provider %s. Options: %s", args[0], providerName, strings.Join(options, ", ")),
+		}
+		return
+	}
+
+	a.Config.Request.Effort = effort
+	if a.Engine != nil {
+		a.Engine.SetEffort(effort)
+	}
+	a.EventCh <- model.Event{
+		Type:    model.AgentReply,
+		Message: fmt.Sprintf("Effort set to: %s", effort),
+	}
+}
+
+func (a *Application) currentEffortProvider() string {
+	if a != nil && a.provider != nil {
+		if name := llm.NormalizeProvider(a.provider.Name()); name != "" {
+			return name
+		}
+	}
+	if a != nil && a.Config != nil {
+		if name := llm.NormalizeProvider(a.Config.Model.Provider); name != "" {
+			return name
+		}
+	}
+	return "openai-completion"
 }
 
 func (a *Application) cmdExit() {

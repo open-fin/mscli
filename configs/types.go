@@ -14,12 +14,50 @@ type Config struct {
 	UI            UIConfig                     `yaml:"ui"`
 	Permissions   PermissionsConfig            `yaml:"permissions"`
 	Context       ContextConfig                `yaml:"context"`
-	Memory        MemoryConfig                 `yaml:"memory"`
 	Execution     ExecutionConfig              `yaml:"execution"`
 	Filesystem    FilesystemConfig             `yaml:"filesystem"`
 }
 
 const DefaultRequestMaxIterations = 100
+const DefaultRequestEffort = "high"
+
+var (
+	openAIEffortOptions    = []string{"none", "minimal", "low", "medium", "high", "xhigh"}
+	anthropicEffortOptions = []string{"low", "medium", "high", "xhigh", "max"}
+)
+
+// NormalizeEffort canonicalizes an effort value for comparison and API use.
+func NormalizeEffort(v string) string {
+	return strings.ToLower(strings.TrimSpace(v))
+}
+
+// EffortOptionsForProvider returns the accepted effort values for a provider.
+func EffortOptionsForProvider(provider string) []string {
+	var options []string
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "anthropic":
+		options = anthropicEffortOptions
+	default:
+		options = openAIEffortOptions
+	}
+	out := make([]string, len(options))
+	copy(out, options)
+	return out
+}
+
+// EffortAllowedForProvider reports whether effort is valid for the provider.
+func EffortAllowedForProvider(provider, effort string) bool {
+	normalized := NormalizeEffort(effort)
+	if normalized == "" {
+		return false
+	}
+	for _, option := range EffortOptionsForProvider(provider) {
+		if normalized == option {
+			return true
+		}
+	}
+	return false
+}
 
 func (c *Config) normalize() {
 	if strings.TrimSpace(c.Model.Provider) == "" {
@@ -42,6 +80,7 @@ type RequestConfig struct {
 	Temperature   *float64 `yaml:"-"`
 	MaxTokens     *int     `yaml:"-"`
 	MaxIterations *int     `yaml:"-"`
+	Effort        string   `yaml:"-"`
 }
 
 // UIConfig holds the UI configuration.
@@ -88,15 +127,6 @@ func DefaultReserveTokens(contextWindow int) int {
 		return MaxDefaultReserveTokens
 	}
 	return reserve
-}
-
-// MemoryConfig holds the memory system configuration.
-type MemoryConfig struct {
-	Enabled   bool   `yaml:"enabled"`
-	StorePath string `yaml:"store_path,omitempty"`
-	MaxItems  int    `yaml:"max_items"`
-	MaxBytes  int64  `yaml:"max_bytes"`
-	TTLHours  int    `yaml:"ttl_hours"`
 }
 
 // ExecutionConfig holds the execution configuration.
@@ -155,16 +185,10 @@ func DefaultConfig() *Config {
 			ReserveTokens:       DefaultReserveTokens(DefaultContextWindow),
 			CompactionThreshold: 0,
 		},
-		Memory: MemoryConfig{
-			Enabled:   true,
-			StorePath: "",
-			MaxItems:  200,
-			MaxBytes:  2 * 1024 * 1024, // 2MB
-			TTLHours:  168,             // 7 days
-		},
 		ModelProfiles: make(map[string]ModelTokenProfile),
 		Request: RequestConfig{
 			MaxIterations: &defaultMaxIterations,
+			Effort:        DefaultRequestEffort,
 		},
 		Execution: ExecutionConfig{
 			Mode:           "local",
@@ -188,13 +212,23 @@ func DefaultConfig() *Config {
 func (c *Config) Validate() error {
 	c.normalize()
 
-	if provider := strings.ToLower(strings.TrimSpace(c.Model.Provider)); provider != "" {
+	provider := strings.ToLower(strings.TrimSpace(c.Model.Provider))
+	if provider != "" {
 		switch provider {
 		case "openai-completion", "openai-responses", "anthropic":
 		default:
 			return fmt.Errorf("unsupported provider %q", strings.TrimSpace(c.Model.Provider))
 		}
 	}
+
+	effort := NormalizeEffort(c.Request.Effort)
+	if effort == "" {
+		effort = DefaultRequestEffort
+	}
+	if !EffortAllowedForProvider(provider, effort) {
+		return fmt.Errorf("effort must be one of %s for provider %s", strings.Join(EffortOptionsForProvider(provider), ", "), provider)
+	}
+	c.Request.Effort = effort
 
 	if c.Request.Temperature != nil {
 		if *c.Request.Temperature < 0 || *c.Request.Temperature > 2 {
@@ -253,6 +287,9 @@ func (c *Config) Merge(other *Config) {
 	if other.Request.MaxIterations != nil {
 		v := *other.Request.MaxIterations
 		c.Request.MaxIterations = &v
+	}
+	if strings.TrimSpace(other.Request.Effort) != "" {
+		c.Request.Effort = NormalizeEffort(other.Request.Effort)
 	}
 
 	if other.Context.Window != 0 {

@@ -343,7 +343,18 @@ func (a *Application) runTaskWithOptions(description string, disableResearchTool
 		Description:          description,
 		DisableResearchTools: disableResearchTools,
 	}
-	if a.ctxManager != nil && a.ctxManager.ShouldCompactAfterAdding(llm.NewUserMessage(description)) {
+	initialMessages, err := a.buildTaskInitialMessages()
+	if err != nil {
+		emit(model.Event{
+			Type:     model.ToolError,
+			ToolName: "context",
+			Message:  fmt.Sprintf("Failed to build initial user context: %v", err),
+		})
+		return
+	}
+	task.InitialMessages = initialMessages
+	task.UserMessage = description
+	if a.ctxManager != nil && a.taskWillCompact(initialMessages, description) {
 		emit(model.Event{
 			Type: model.ContextCompactStarted,
 		})
@@ -351,7 +362,7 @@ func (a *Application) runTaskWithOptions(description string, disableResearchTool
 	ctx, runID := a.beginTaskRun()
 	defer a.finishTaskRun(runID)
 
-	err := a.Engine.RunWithContextStream(ctx, task, func(ev loop.Event) {
+	err = a.Engine.RunWithContextStream(ctx, task, func(ev loop.Event) {
 		uiEvent := convertLoopEvent(ev)
 		if uiEvent != nil {
 			emit(*uiEvent)
@@ -422,6 +433,49 @@ func (a *Application) emitMaxIterationDecisionPrompt(prefix string) {
 		message = prefix + "\n" + message
 	}
 	a.EventCh <- model.Event{Type: model.AgentReply, Message: message}
+}
+
+func (a *Application) buildTaskInitialMessages() ([]llm.Message, error) {
+	if a == nil || !a.memoryConfig.Resolved || !a.shouldInjectInitialUserContext() {
+		return nil, nil
+	}
+	memory, err := a.activeAutoMemoryConfig()
+	if err != nil {
+		return nil, err
+	}
+	msg, err := buildInitialUserContextMessage(a.WorkDir, memory)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(msg.Content) == "" && len(msg.ContentParts) == 0 {
+		return nil, nil
+	}
+	return []llm.Message{msg}, nil
+}
+
+func (a *Application) shouldInjectInitialUserContext() bool {
+	if a == nil || a.ctxManager == nil {
+		return false
+	}
+	for _, msg := range a.ctxManager.GetNonSystemMessages() {
+		if strings.TrimSpace(msg.Role) != "user" {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func (a *Application) taskWillCompact(initialMessages []llm.Message, userInput string) bool {
+	if a == nil || a.ctxManager == nil {
+		return false
+	}
+	for _, msg := range initialMessages {
+		if a.ctxManager.ShouldCompactAfterAdding(msg) {
+			return true
+		}
+	}
+	return a.ctxManager.ShouldCompactAfterAdding(llm.NewUserMessage(userInput))
 }
 
 func (a *Application) beginTaskRun() (context.Context, uint64) {

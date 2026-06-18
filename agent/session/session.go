@@ -294,6 +294,19 @@ func CleanupExpired(maxAge time.Duration) (int, error) {
 	return removed, nil
 }
 
+// BucketDirForWorkDir returns the session bucket directory for a workspace.
+func BucketDirForWorkDir(workDir string) (string, error) {
+	absWorkDir, err := normalizeWorkDir(workDir)
+	if err != nil {
+		return "", err
+	}
+	root, err := sessionRootDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, workDirKey(absWorkDir)), nil
+}
+
 // LoadByID loads a specific session for the given workdir.
 func LoadByID(workDir, sessionID string) (*Session, error) {
 	absWorkDir, err := normalizeWorkDir(workDir)
@@ -1230,6 +1243,9 @@ func cleanupExpiredBucket(bucketPath string, cutoff time.Time) (int, error) {
 	removed := 0
 	for _, entry := range entries {
 		if !entry.IsDir() {
+			continue
+		}
+		if !strings.HasPrefix(entry.Name(), "sess_") {
 			continue
 		}
 		sessionDir := filepath.Join(bucketPath, entry.Name())

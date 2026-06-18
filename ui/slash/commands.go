@@ -154,6 +154,12 @@ func (r *Registry) registerDefaults() {
 	})
 
 	r.Register(Command{
+		Name:        "/effort",
+		Description: "Show or set model reasoning effort",
+		Usage:       "/effort [value]",
+	})
+
+	r.Register(Command{
 		Name:        "/exit",
 		Description: "Exit the application",
 		Usage:       "/exit",
@@ -169,6 +175,12 @@ func (r *Registry) registerDefaults() {
 		Name:        "/ctx",
 		Description: "Show current context token usage and source",
 		Usage:       "/ctx",
+	})
+
+	r.Register(Command{
+		Name:        "/init",
+		Description: "Create or improve MSCLI.md for this repository",
+		Usage:       "/init",
 	})
 
 	r.Register(Command{

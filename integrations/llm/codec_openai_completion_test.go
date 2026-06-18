@@ -25,6 +25,57 @@ func TestOpenAIEncodeStreamRequestIncludesUsage(t *testing.T) {
 	}
 }
 
+func TestOpenAIEncodeRequestIncludesReasoningEffort(t *testing.T) {
+	codec := newOpenAICodec("gpt-5")
+	req := &CompletionRequest{
+		Messages: []Message{NewUserMessage("hello")},
+		Effort:   "minimal",
+	}
+
+	body, err := codec.encodeRequest(req, false)
+	if err != nil {
+		t.Fatalf("encodeRequest failed: %v", err)
+	}
+
+	if got, want := body.ReasoningEffort, "minimal"; got != want {
+		t.Fatalf("ReasoningEffort = %q, want %q", got, want)
+	}
+}
+
+func TestOpenAIEncodeRequestUsesStructuredTextParts(t *testing.T) {
+	codec := newOpenAICodec("gpt-4o")
+	req := &CompletionRequest{
+		Messages: []Message{NewUserMessageParts([]MessageContentPart{
+			NewTextContentPart("memory context"),
+			NewTextContentPart("MSCLI.md context"),
+		})},
+	}
+
+	body, err := codec.encodeRequest(req, false)
+	if err != nil {
+		t.Fatalf("encodeRequest failed: %v", err)
+	}
+	if got, want := len(body.Messages), 1; got != want {
+		t.Fatalf("messages = %d, want %d", got, want)
+	}
+	parts, ok := body.Messages[0].Content.([]openAIMessageContentPart)
+	if !ok {
+		t.Fatalf("message content = %#v, want structured text parts", body.Messages[0].Content)
+	}
+	if got, want := len(parts), 2; got != want {
+		t.Fatalf("content parts = %d, want %d", got, want)
+	}
+	if got, want := parts[0].Type, "text"; got != want {
+		t.Fatalf("part[0].Type = %q, want %q", got, want)
+	}
+	if got, want := parts[0].Text, "memory context"; got != want {
+		t.Fatalf("part[0].Text = %q, want %q", got, want)
+	}
+	if got, want := parts[1].Text, "MSCLI.md context"; got != want {
+		t.Fatalf("part[1].Text = %q, want %q", got, want)
+	}
+}
+
 func TestOpenAIStreamIteratorCapturesUsageAfterFinishReason(t *testing.T) {
 	stream := strings.Join([]string{
 		`data: {"id":"chatcmpl-1","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"hi"}}]}`,
