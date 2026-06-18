@@ -9,6 +9,28 @@ import (
 	"gitcode.com/mindspore/mscli/integrations/llm"
 )
 
+func TestAddToolResultNormalizesEmptyContent(t *testing.T) {
+	cm := ctxmanager.NewManager(ctxmanager.ManagerConfig{
+		ContextWindow: 1000,
+		ReserveTokens: 20,
+	})
+
+	engine := &Engine{ctxManager: cm}
+	ex := &executor{engine: engine}
+
+	if _, err := ex.addToolResultWithFallback(context.Background(), "call_empty", ""); err != nil {
+		t.Fatalf("addToolResultWithFallback returned error: %v", err)
+	}
+
+	msgs := cm.GetNonSystemMessages()
+	if len(msgs) != 1 {
+		t.Fatalf("tool message count = %d, want 1", len(msgs))
+	}
+	if got := msgs[0].Content; got != emptyToolResultPlaceholder {
+		t.Fatalf("tool content = %q, want %q", got, emptyToolResultPlaceholder)
+	}
+}
+
 func TestAddToolResultWithFallbackOnOversizedContent(t *testing.T) {
 	cm := ctxmanager.NewManager(ctxmanager.ManagerConfig{
 		ContextWindow:       120,
