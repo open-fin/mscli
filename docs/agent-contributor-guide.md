@@ -49,14 +49,16 @@ go run ./cmd/mscli
 This summary matches the current tree in this checkout.
 
 ```text
-mindspore-cli/
+mscli/
   cmd/mscli/              process entrypoint
   internal/
     app/                   bootstrap, wiring, commands, startup, train flow
-    project/               roadmap and weekly helpers
+    factory/               local Factory card, pack, compiler, and runtime logic
+    issues/                local issue model used by diagnose/fix flows
     train/                 training types and target abstraction
     update/                binary update checker
     workspacefile/         workspace path validation
+    version/               build and release version metadata
   agent/
     context/               context window management and compaction
     loop/                  ReAct execution loop
@@ -64,9 +66,11 @@ mindspore-cli/
   workflow/
     train/                 train lane controller, setup, run, demo backend
   integrations/
+    domain/                domain constants and shared taxonomy
     llm/                   provider registry and OpenAI/Anthropic clients
     skills/                skill listing, loading, embedded builtin skills
   permission/              permission service, types, safe command allowlist
+  report/                  report data structures and helpers
   runtime/
     shell/                 stateful shell runner
     probes/                unified probe result model
@@ -102,16 +106,16 @@ Important current details:
 Keep dependencies flowing downward only. Avoid upward or circular imports.
 
 ```text
-cmd/mscli -> internal/app -> agent, workflow, ui
+cmd/mscli -> internal/app -> agent, workflow, ui, configs, integrations, tools, permission, internal/factory, internal/train
 agent -> permission, integrations, configs
-workflow -> internal/train, runtime/probes, configs
+workflow -> internal/train, runtime/probes
 workflow/train -> internal/train, runtime/probes (NOT ui/model)
 runtime/probes -> internal/train
-tools -> runtime, integrations, configs
+tools -> runtime, integrations
 runtime -> configs
 permission -> configs
 integrations -> configs
-report -> trace, configs
+report -> configs
 ui -> configs
 ```
 

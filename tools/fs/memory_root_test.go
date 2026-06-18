@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gitcode.com/mindspore/mscli/internal/pathpolicy"
 )
 
 func TestMemoryRootPathOptionsAllowConfiguredRootOnly(t *testing.T) {
@@ -29,10 +31,10 @@ func TestMemoryRootPathOptionsAllowConfiguredRootOnly(t *testing.T) {
 		t.Fatalf("WriteFile(other home) error = %v", err)
 	}
 
-	opts := PathOptions{AllowedAbsoluteRoots: []string{memoryRoot}}
+	resolver := pathpolicy.NewResolver(pathpolicy.NewPathPolicyWithWriteRoots(workDir, nil, []string{memoryRoot}, nil))
 	memoryFile := filepath.Join(memoryRoot, "MEMORY.md")
 
-	writeResult, err := NewWriteToolWithOptions(workDir, opts).Execute(context.Background(), mustJSON(t, map[string]string{
+	writeResult, err := NewWriteToolWithResolver(resolver).Execute(context.Background(), mustJSON(t, map[string]string{
 		"path":    memoryFile,
 		"content": "needle memory\n",
 	}))
@@ -43,7 +45,7 @@ func TestMemoryRootPathOptionsAllowConfiguredRootOnly(t *testing.T) {
 		t.Fatalf("write result error = %v", writeResult.Error)
 	}
 
-	readResult, err := NewReadToolWithOptions(workDir, opts).Execute(context.Background(), mustJSON(t, map[string]string{
+	readResult, err := NewReadToolWithResolver(resolver).Execute(context.Background(), mustJSON(t, map[string]string{
 		"path": memoryFile,
 	}))
 	if err != nil {
@@ -56,7 +58,7 @@ func TestMemoryRootPathOptionsAllowConfiguredRootOnly(t *testing.T) {
 		t.Fatalf("read content = %q, want memory content", readResult.Content)
 	}
 
-	grepResult, err := NewGrepToolWithOptions(workDir, opts).Execute(context.Background(), mustJSON(t, map[string]any{
+	grepResult, err := NewGrepToolWithResolver(resolver).Execute(context.Background(), mustJSON(t, map[string]any{
 		"pattern":        "needle",
 		"path":           memoryRoot,
 		"case_sensitive": true,
@@ -71,7 +73,7 @@ func TestMemoryRootPathOptionsAllowConfiguredRootOnly(t *testing.T) {
 		t.Fatalf("grep content = %q, want memory match", grepResult.Content)
 	}
 
-	globResult, err := NewGlobToolWithOptions(workDir, opts).Execute(context.Background(), mustJSON(t, map[string]any{
+	globResult, err := NewGlobToolWithResolver(resolver).Execute(context.Background(), mustJSON(t, map[string]any{
 		"pattern": "*.md",
 		"path":    memoryRoot,
 	}))
@@ -89,7 +91,7 @@ func TestMemoryRootPathOptionsAllowConfiguredRootOnly(t *testing.T) {
 		filepath.Join(siblingSessionRoot, "trajectory.jsonl"),
 		filepath.Join(otherHomeRoot, "secret.txt"),
 	} {
-		result, err := NewReadToolWithOptions(workDir, opts).Execute(context.Background(), mustJSON(t, map[string]string{
+		result, err := NewReadToolWithResolver(resolver).Execute(context.Background(), mustJSON(t, map[string]string{
 			"path": path,
 		}))
 		if err != nil {
@@ -98,8 +100,8 @@ func TestMemoryRootPathOptionsAllowConfiguredRootOnly(t *testing.T) {
 		if result.Error == nil {
 			t.Fatalf("read rejected path %s succeeded, want error", path)
 		}
-		if !strings.Contains(result.Error.Error(), "absolute paths are not allowed") {
-			t.Fatalf("read rejected path error = %q, want absolute path rejection", result.Error)
+		if result.Error != pathpolicy.ErrExternalPathDenied {
+			t.Fatalf("read rejected path error = %q, want external path denial", result.Error)
 		}
 	}
 }

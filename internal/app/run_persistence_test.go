@@ -165,7 +165,7 @@ func TestRunTaskPersistsSessionAfterLiveLLMReply(t *testing.T) {
 		session:    runtimeSession,
 		ctxManager: ctxManager,
 	}
-	engine.SetTrajectoryRecorder(newTrajectoryRecorder(runtimeSession, ctxManager, workDir, autoMemoryConfig{Resolved: true, Enabled: false}, app.noteLiveLLMActivity))
+	engine.SetTrajectoryRecorder(newTrajectoryRecorder(runtimeSession, ctxManager, workDir, nil, autoMemoryConfig{Resolved: true, Enabled: false}, app.noteLiveLLMActivity))
 
 	app.runTask("hello")
 
@@ -269,7 +269,7 @@ func TestRunTaskInjectsMemoryAndMSCLIAsSeparateInitialUserMessage(t *testing.T) 
 		ctxManager:   ctxManager,
 		memoryConfig: memoryCfg,
 	}
-	engine.SetTrajectoryRecorder(newTrajectoryRecorder(runtimeSession, ctxManager, workDir, memoryCfg, app.noteLiveLLMActivity))
+	engine.SetTrajectoryRecorder(newTrajectoryRecorder(runtimeSession, ctxManager, workDir, nil, memoryCfg, app.noteLiveLLMActivity))
 
 	app.runTask("hello")
 

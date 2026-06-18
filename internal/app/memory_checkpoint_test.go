@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 
 	"gitcode.com/mindspore/mscli/agent/session"
 	"gitcode.com/mindspore/mscli/integrations/llm"
+	"gitcode.com/mindspore/mscli/internal/pathpolicy"
 )
 
 func TestTrajectoryRecorderSkipsMemoryCheckpointBackups(t *testing.T) {
@@ -42,11 +44,12 @@ func TestTrajectoryRecorderSkipsMemoryCheckpointBackups(t *testing.T) {
 		runtimeSession,
 		nil,
 		workDir,
+		pathpolicy.NewResolver(pathpolicy.NewPathPolicyWithWriteRoots(workDir, nil, []string{memoryDir}, nil)),
 		autoMemoryConfig{Resolved: true, Enabled: true, Dir: memoryDir},
 		nil,
 	)
 
-	err = recorder.PrepareFileMutation(llm.ToolCall{
+	err = recorder.PrepareFileMutation(context.Background(), llm.ToolCall{
 		Function: llm.ToolCallFunc{
 			Name:      "write",
 			Arguments: args,

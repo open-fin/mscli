@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Configuration — change these to switch skills source.
-SKILLS_REPO="https://github.com/mindspore-lab/mindspore-skills"
+SKILLS_REPO="https://gitcode.com/mindspore/mindspore-skills"
 SKILLS_BRANCH="main"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

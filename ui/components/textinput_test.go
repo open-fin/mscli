@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"gitcode.com/mindspore/mscli/ui/slash"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 const largePastedBlock = "line 01\nline 02\nline 03\nline 04\nline 05\nline 06\nline 07\nline 08\n"
@@ -644,6 +644,34 @@ func TestTextInputReplacesOnlyCurrentTokenWhenApplyingFileSuggestion(t *testing.
 	input, _ = input.Update(tea.KeyMsg{Type: tea.KeyTab})
 	if got := input.Value(); got != "before @ctx.txt after" {
 		t.Fatalf("expected current token replacement only, got %q", got)
+	}
+}
+
+func TestTextInputShowsExternalReadAuthorizationHintForAbsoluteAtPath(t *testing.T) {
+	root := t.TempDir()
+	writeSuggestionFile(t, root, "ctx.txt")
+	external := filepath.Join(t.TempDir(), "external.md")
+
+	input := NewTextInput().WithFileSuggestions(root)
+	input.Model.SetValue("read @" + external)
+	input.Model.SetCursor(len([]rune(input.Value())))
+	input.updateSuggestions()
+
+	if !input.HasSuggestions() {
+		t.Fatal("expected external read authorization hint")
+	}
+	if got := len(input.suggestionItems); got != 1 {
+		t.Fatalf("expected one external authorization hint, got %d", got)
+	}
+	item := input.suggestionItems[0]
+	if item.Display != "External file supported" {
+		t.Fatalf("expected hint display, got %q", item.Display)
+	}
+	if item.Description != "Submit to request authorization" {
+		t.Fatalf("expected submit hint, got %q", item.Description)
+	}
+	if item.Value != external {
+		t.Fatalf("expected external path value, got %q", item.Value)
 	}
 }
 

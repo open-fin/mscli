@@ -10,23 +10,22 @@ import (
 	"regexp"
 
 	"gitcode.com/mindspore/mscli/integrations/llm"
+	"gitcode.com/mindspore/mscli/internal/pathpolicy"
 	"gitcode.com/mindspore/mscli/tools"
 )
 
 // GrepTool searches for patterns in files.
 type GrepTool struct {
-	workDir     string
-	pathOptions PathOptions
+	resolver *pathpolicy.Resolver
 }
 
 // NewGrepTool creates a new grep tool.
 func NewGrepTool(workDir string) *GrepTool {
-	return NewGrepToolWithOptions(workDir, PathOptions{})
+	return NewGrepToolWithResolver(newWorkspaceResolver(workDir))
 }
 
-// NewGrepToolWithOptions creates a new grep tool with additional path access.
-func NewGrepToolWithOptions(workDir string, opts PathOptions) *GrepTool {
-	return &GrepTool{workDir: workDir, pathOptions: opts}
+func NewGrepToolWithResolver(resolver *pathpolicy.Resolver) *GrepTool {
+	return &GrepTool{resolver: resolver}
 }
 
 // Name returns the tool name.
@@ -59,7 +58,7 @@ func (t *GrepTool) Schema() llm.ToolSchema {
 			},
 			"path": {
 				Type:        "string",
-				Description: "Directory or file to search in (default: current directory)",
+				Description: "Directory or file to search in (default: workspace). Absolute paths require workspace or external_read_roots access",
 			},
 			"include": {
 				Type:        "string",
@@ -116,9 +115,12 @@ func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 	if p.Path != "" {
 		searchPath = p.Path
 	}
-	fullPath, err := resolveSafePathWithOptions(t.workDir, searchPath, t.pathOptions)
+	fullPath, denial, err := t.resolver.ResolveReadablePathForOperation("grep", searchPath, pathpolicy.ResolveOptionsFromContext(ctx))
 	if err != nil {
 		return withSourceMeta(tools.ErrorResult(err)), nil
+	}
+	if denial != nil {
+		return pathpolicy.NewPathDenialResult(denial), nil
 	}
 
 	// Compile regex
@@ -147,7 +149,7 @@ func (t *GrepTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 
 	var lines []string
 	for _, m := range matches {
-		relPath, _ := filepath.Rel(t.workDir, m.File)
+		relPath, _ := filepath.Rel(t.resolver.WorkDir(), m.File)
 		lines = append(lines, fmt.Sprintf("%s:%d:%s", relPath, m.Line, m.Text))
 	}
 

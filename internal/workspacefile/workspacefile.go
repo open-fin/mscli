@@ -50,19 +50,43 @@ func ResolveExistingFilePath(workDir, input string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := CheckExistingTextFile(fullPath, input, DefaultMaxInlineBytes); err != nil {
+		return "", err
+	}
+	return fullPath, nil
+}
 
+func CheckExistingTextFile(fullPath, displayPath string, maxBytes int) error {
+	if maxBytes <= 0 {
+		maxBytes = DefaultMaxInlineBytes
+	}
 	info, err := os.Stat(fullPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("file not found: %s", input)
+			return fmt.Errorf("file not found: %s", displayPath)
 		}
-		return "", fmt.Errorf("stat file: %w", err)
+		return fmt.Errorf("stat file: %w", err)
 	}
 	if info.IsDir() {
-		return "", fmt.Errorf("path is a directory: %s", input)
+		return fmt.Errorf("path is a directory: %s", displayPath)
 	}
-
-	return fullPath, nil
+	if info.Size() > int64(maxBytes) {
+		return fmt.Errorf("file too large: %s exceeds %d bytes", displayPath, maxBytes)
+	}
+	data, err := os.ReadFile(fullPath)
+	if err != nil {
+		return fmt.Errorf("read file: %w", err)
+	}
+	if len(data) > maxBytes {
+		return fmt.Errorf("file too large: %s exceeds %d bytes", displayPath, maxBytes)
+	}
+	if bytes.IndexByte(data, 0) >= 0 {
+		return fmt.Errorf("file is not valid text (contains NUL bytes): %s", displayPath)
+	}
+	if !utf8.Valid(data) {
+		return fmt.Errorf("file is not valid UTF-8 text: %s", displayPath)
+	}
+	return nil
 }
 
 // ReadTextFile reads a validated workspace-relative file and applies text safety checks.
@@ -71,31 +95,16 @@ func ReadTextFile(workDir, input string, maxBytes int) (string, error) {
 		maxBytes = DefaultMaxInlineBytes
 	}
 
-	fullPath, err := ResolveExistingFilePath(workDir, input)
+	fullPath, err := ResolvePath(workDir, input)
 	if err != nil {
 		return "", err
 	}
-
-	info, err := os.Stat(fullPath)
-	if err != nil {
-		return "", fmt.Errorf("stat file: %w", err)
+	if err := CheckExistingTextFile(fullPath, input, maxBytes); err != nil {
+		return "", err
 	}
-	if info.Size() > int64(maxBytes) {
-		return "", fmt.Errorf("file too large: %s exceeds %d bytes", input, maxBytes)
-	}
-
 	data, err := os.ReadFile(fullPath)
 	if err != nil {
 		return "", fmt.Errorf("read file: %w", err)
-	}
-	if len(data) > maxBytes {
-		return "", fmt.Errorf("file too large: %s exceeds %d bytes", input, maxBytes)
-	}
-	if bytes.IndexByte(data, 0) >= 0 {
-		return "", fmt.Errorf("file is not valid text (contains NUL bytes): %s", input)
-	}
-	if !utf8.Valid(data) {
-		return "", fmt.Errorf("file is not valid UTF-8 text: %s", input)
 	}
 
 	return string(data), nil

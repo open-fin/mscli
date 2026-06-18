@@ -6,12 +6,12 @@ MindSpore Model Agent is a training-focused AI agent solution for the MindSpore 
 
 It is built on two closely related parts:
 
-- [`mindspore-skills`](https://github.com/mindspore-lab/mindspore-skills): the domain capability layer for model training and debugging tasks. It provides reusable skills for readiness checking, failure diagnosis, accuracy analysis, performance analysis, model migration, algorithm adaptation, and operator implementation. These skills can work not only with MindSpore Model Agent, but also with other agentic CLI environments such as Claude Code, OpenCode, and Codex.
-- `mindspore-cli`: the official CLI of MindSpore Model Agent. It provides better integration with related skills and is optimized for model training use cases, offering a more unified end-to-end experience for training-oriented workflows.
+- [`mindspore-skills`](https://gitcode.com/mindspore/mindspore-skills): the domain capability layer for model training and debugging tasks. It provides reusable skills for readiness checking, failure diagnosis, accuracy analysis, performance analysis, model migration, algorithm adaptation, and operator implementation. These skills can work not only with MindSpore Model Agent, but also with other agentic CLI environments such as Claude Code, OpenCode, and Codex.
+- `mscli`: the official CLI of MindSpore Model Agent. It provides better integration with related skills and is optimized for model training use cases, offering a more unified end-to-end experience for training-oriented workflows.
 
 ## Latest Version
 
-Latest version: `MindSpore Model Agent v0.1.3`. See [changelog.md](changelog.md) for update history.
+Latest version: `MindSpore Model Agent v0.1.4`. See [changelog.md](changelog.md) for update history.
 
 Highlights:
 

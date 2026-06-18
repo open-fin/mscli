@@ -15,6 +15,7 @@ type Config struct {
 	Permissions   PermissionsConfig            `yaml:"permissions"`
 	Context       ContextConfig                `yaml:"context"`
 	Execution     ExecutionConfig              `yaml:"execution"`
+	Filesystem    FilesystemConfig             `yaml:"filesystem"`
 }
 
 const DefaultRequestMaxIterations = 100
@@ -136,6 +137,12 @@ type ExecutionConfig struct {
 	Docker         DockerConfig `yaml:"docker,omitempty"`
 }
 
+// FilesystemConfig holds filesystem access policy configuration.
+type FilesystemConfig struct {
+	ExternalReadRoots  []string `yaml:"external_read_roots,omitempty"`
+	ExternalWriteRoots []string `yaml:"external_write_roots,omitempty"`
+}
+
 // DockerConfig holds the Docker execution configuration.
 type DockerConfig struct {
 	Image   string            `yaml:"image"`
@@ -195,6 +202,7 @@ func DefaultConfig() *Config {
 				Env:     make(map[string]string),
 			},
 		},
+		Filesystem: FilesystemConfig{},
 	}
 	cfg.normalize()
 	return cfg
@@ -292,6 +300,13 @@ func (c *Config) Merge(other *Config) {
 	}
 	if other.Context.CompactionThreshold != 0 {
 		c.Context.CompactionThreshold = other.Context.CompactionThreshold
+	}
+
+	if len(other.Filesystem.ExternalReadRoots) > 0 {
+		c.Filesystem.ExternalReadRoots = append([]string(nil), other.Filesystem.ExternalReadRoots...)
+	}
+	if len(other.Filesystem.ExternalWriteRoots) > 0 {
+		c.Filesystem.ExternalWriteRoots = append([]string(nil), other.Filesystem.ExternalWriteRoots...)
 	}
 }
 
