@@ -3,26 +3,28 @@
 ## Two-Repo Model
 
 ```text
-mindspore-cli (this repo)    runtime — TUI, agent loop, tool registry
+mscli (this repo)    runtime — TUI, agent loop, tool registry
 mindspore-skills             instructions — SKILL.md + skill.yaml per skill
 ```
 
-- `mindspore-cli` loads skills from `mindspore-skills` at build time (embedded in binary)
+- `mscli` loads skills from `mindspore-skills` at build time (embedded in binary)
 - Skills are portable across CLIs (Claude Code, OpenCode, Gemini CLI, Codex)
-- `mindspore-cli` is the official end-to-end entrypoint
+- `mscli` is the official end-to-end entrypoint
 - `mindspore-skills` is the reusable capability layer
 
 ## Top-Level Shape
 
 ```text
-mindspore-cli/
+mscli/
   cmd/mscli/              process entrypoint
   internal/
     app/                   composition root, startup, commands, UI bridging
-    project/               roadmap and weekly status helpers
+    factory/               local Factory card, pack, compiler, and runtime logic
+    issues/                local issue model used by diagnose/fix flows
     train/                 train request and target types
     update/                binary update checker
     workspacefile/         workspace path validation
+    version/               build and release version metadata
   agent/
     context/               context window management and compaction
     loop/                  ReAct-style execution engine (the core runtime)
@@ -31,9 +33,11 @@ mindspore-cli/
   workflow/
     train/                 train lane controller, setup, run, demo backend
   integrations/
+    domain/                domain constants and shared taxonomy
     llm/                   unified provider manager (openai-completion/openai-responses/anthropic)
     skills/                skill listing, loading, and metadata (embedded at build time)
   permission/              permission policy, types, store, safe command allowlist
+  report/                  report data structures and helpers
   runtime/
     artifacts/             state-root artifact writer for large tool results
     mcp/                   MCP config, approvals, stdio JSON-RPC, and server lifecycle
@@ -46,8 +50,8 @@ mindspore-cli/
     skills/                skill loading tool
   ui/                      Bubble Tea app, shared model, panels, slash commands
   configs/                 config loading, state, shared config types
-  scripts/                 release and install scripts
-  docs/                    architecture and contributor guide
+  scripts/                 install, release, and docs lint scripts
+  docs/                    architecture, contributor, and factory docs
 ```
 
 ## Primary Runtime Flow
@@ -170,10 +174,10 @@ Free text uses the base system prompt which includes skill summaries
 
 ```text
 cmd/mscli -> internal/app
-internal/app -> agent, workflow, ui, configs, integrations, tools, permission
+internal/app -> agent, workflow, ui, configs, integrations, tools, permission, internal/factory, internal/train
 agent -> integrations, permission, configs
-workflow -> internal/train, runtime/probes, configs
-tools -> runtime, integrations, configs
+workflow -> internal/train, runtime/probes
+tools -> runtime, integrations
 runtime -> configs
 ui -> configs
 ```

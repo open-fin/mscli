@@ -1,10 +1,10 @@
 # Maintainers Note
 
-## Suggested GitHub About description
+## Suggested GitCode About description
 
 Agent CLI for AI infra and model training workflows: readiness, diagnosis, accuracy, performance, migration.
 
-## Suggested GitHub topics
+## Suggested GitCode topics
 
 - mindspore
 - cli
