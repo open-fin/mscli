@@ -6,8 +6,13 @@ import (
 
 	"gitcode.com/mindspore/mscli/internal/factory/pack"
 	factoryruntime "gitcode.com/mindspore/mscli/internal/factory/runtime"
-	issuepkg "gitcode.com/mindspore/mscli/internal/issues"
 	"gitcode.com/mindspore/mscli/ui/model"
+)
+
+const (
+	issueKindFailure     = "failure"
+	issueKindAccuracy    = "accuracy"
+	issueKindPerformance = "performance"
 )
 
 func (a *Application) cmdDiagnose(input string) {
@@ -168,13 +173,13 @@ func inferStackKeywords(text string) []string {
 func inferProblemType(text string) string {
 	lower := strings.ToLower(text)
 	if strings.Contains(lower, "accuracy") || strings.Contains(lower, "loss") || strings.Contains(lower, "nan") || strings.Contains(lower, "precision") {
-		return string(issuepkg.KindAccuracy)
+		return issueKindAccuracy
 	}
 	if strings.Contains(lower, "performance") || strings.Contains(lower, "throughput") || strings.Contains(lower, "latency") || strings.Contains(lower, "slow") {
-		return string(issuepkg.KindPerformance)
+		return issueKindPerformance
 	}
 	if strings.Contains(lower, "error") || strings.Contains(lower, "failed") || strings.Contains(lower, "exception") || strings.Contains(lower, "crash") || strings.Contains(lower, "oom") {
-		return string(issuepkg.KindFailure)
+		return issueKindFailure
 	}
 	return ""
 }

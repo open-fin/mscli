@@ -54,7 +54,6 @@ mscli/
   internal/
     app/                   bootstrap, wiring, commands, startup, train flow
     factory/               local Factory card, pack, compiler, and runtime logic
-    issues/                local issue model used by diagnose/fix flows
     pathpolicy/            workspace and external path access policy
     train/                 training types and target abstraction
     update/                binary update checker

@@ -20,7 +20,6 @@ mscli/
   internal/
     app/                   composition root, startup, commands, UI bridging
     factory/               local Factory card, pack, compiler, and runtime logic
-    issues/                local issue model used by diagnose/fix flows
     train/                 train request and target types
     update/                binary update checker
     workspacefile/         workspace path validation
