@@ -1,6 +1,7 @@
 package components
 
 import (
+	"path/filepath"
 	"strings"
 	"unicode"
 
@@ -596,11 +597,43 @@ func (t TextInput) slashSuggestionItems(token string, span tokenRange) ([]sugges
 	return items, true
 }
 
-func (t TextInput) fileSuggestionItems(token string, span tokenRange) ([]suggestionItem, bool) {
+func (t TextInput) fileSuggestionItems(token string, _ tokenRange) ([]suggestionItem, bool) {
 	if !isFileSuggestionToken(token) {
 		return nil, false
 	}
-	return t.fileSuggestion.suggestions(token[1:]), true
+	path := token[1:]
+	if t.isExternalFileSuggestionPath(path) {
+		return []suggestionItem{{
+			Value:       path,
+			Display:     "External file supported",
+			Description: "Submit to request authorization",
+			Kind:        suggestionKindFile,
+		}}, true
+	}
+	return t.fileSuggestion.suggestions(path), true
+}
+
+func (t TextInput) isExternalFileSuggestionPath(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" || !filepath.IsAbs(path) {
+		return false
+	}
+	if t.fileSuggestion == nil || strings.TrimSpace(t.fileSuggestion.workDir) == "" {
+		return true
+	}
+	workDir, err := filepath.Abs(t.fileSuggestion.workDir)
+	if err != nil {
+		return true
+	}
+	candidate, err := filepath.Abs(path)
+	if err != nil {
+		return true
+	}
+	rel, err := filepath.Rel(workDir, candidate)
+	if err != nil {
+		return true
+	}
+	return rel == ".." || strings.HasPrefix(filepath.ToSlash(rel), "../")
 }
 
 func (t TextInput) currentToken() (string, tokenRange, bool) {
@@ -674,7 +707,7 @@ func isAllowedFileSuggestionRune(r rune) bool {
 		return true
 	}
 	switch r {
-	case '.', '_', '/', '\\', '-':
+	case '.', '_', '/', '\\', '-', ':':
 		return true
 	default:
 		return false

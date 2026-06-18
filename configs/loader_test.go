@@ -3,6 +3,7 @@ package configs
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -21,6 +22,7 @@ func TestLoadWithEnv_UsesDefaultsAndEnvOverrides(t *testing.T) {
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	projectDir := t.TempDir()
 	t.Chdir(projectDir)
@@ -81,11 +83,12 @@ func TestLoadWithEnv_UsesDefaultsAndEnvOverrides(t *testing.T) {
 	}
 }
 
-func TestLoadWithEnv_IgnoresConfigFiles(t *testing.T) {
+func TestLoadWithEnv_LoadsUserConfigAndIgnoresProjectConfig(t *testing.T) {
 	clearEnv(t)
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	projectDir := t.TempDir()
 	t.Chdir(projectDir)
@@ -94,7 +97,7 @@ func TestLoadWithEnv_IgnoresConfigFiles(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(userPath), 0755); err != nil {
 		t.Fatalf("mkdir user config dir: %v", err)
 	}
-	if err := os.WriteFile(userPath, []byte("model: [\n"), 0600); err != nil {
+	if err := os.WriteFile(userPath, []byte("filesystem:\n  external_read_roots:\n    - /tmp/external-read\n  external_write_roots:\n    - /tmp/external-write\n"), 0600); err != nil {
 		t.Fatalf("write user config: %v", err)
 	}
 
@@ -110,8 +113,11 @@ func TestLoadWithEnv_IgnoresConfigFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadWithEnv() error = %v", err)
 	}
-	if got, want := cfg.Model.Model, ""; got != want {
-		t.Fatalf("model = %q, want %q", got, want)
+	if got, want := cfg.Filesystem.ExternalReadRoots, []string{"/tmp/external-read"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("filesystem.external_read_roots = %v, want %v", got, want)
+	}
+	if got, want := cfg.Filesystem.ExternalWriteRoots, []string{"/tmp/external-write"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("filesystem.external_write_roots = %v, want %v", got, want)
 	}
 	if cfg.Request.MaxIterations == nil {
 		t.Fatal("request.max_iterations = nil, want default value")
@@ -215,6 +221,8 @@ func clearEnv(t *testing.T) {
 		"MSCLI_PERMISSIONS_DEFAULT",
 		"MSCLI_MEMORY_ENABLED",
 		"MSCLI_MEMORY_PATH",
+		"MSCLI_EXTERNAL_READ_ROOTS",
+		"MSCLI_EXTERNAL_WRITE_ROOTS",
 		"OPENAI_API_KEY",
 		"OPENAI_MODEL",
 		"OPENAI_BASE_URL",

@@ -160,7 +160,7 @@ func TestRunTaskPersistsSessionAfterLiveLLMReply(t *testing.T) {
 		session:    runtimeSession,
 		ctxManager: ctxManager,
 	}
-	engine.SetTrajectoryRecorder(newTrajectoryRecorder(runtimeSession, ctxManager, workDir, app.noteLiveLLMActivity))
+	engine.SetTrajectoryRecorder(newTrajectoryRecorder(runtimeSession, ctxManager, workDir, nil, app.noteLiveLLMActivity))
 
 	app.runTask("hello")
 
