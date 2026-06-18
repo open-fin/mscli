@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"gitcode.com/mindspore/mscli/integrations/llm"
+	"gitcode.com/mindspore/mscli/internal/pathpolicy"
 	"gitcode.com/mindspore/mscli/tools"
 )
 
@@ -18,22 +19,19 @@ const MaxReadBytes = 100_000
 
 // ReadTool reads file contents.
 type ReadTool struct {
-	workDir     string
-	pathOptions PathOptions
-	spillDir    string
+	resolver *pathpolicy.Resolver
+	spillDir string
 }
 
 // NewReadTool creates a new read tool.
 func NewReadTool(workDir string) *ReadTool {
-	return NewReadToolWithOptions(workDir, PathOptions{})
+	return NewReadToolWithResolver(newWorkspaceResolver(workDir))
 }
 
-// NewReadToolWithOptions creates a new read tool with additional path access.
-func NewReadToolWithOptions(workDir string, opts PathOptions) *ReadTool {
+func NewReadToolWithResolver(resolver *pathpolicy.Resolver) *ReadTool {
 	return &ReadTool{
-		workDir:     workDir,
-		pathOptions: opts,
-		spillDir:    tools.DefaultSpillDir(workDir),
+		resolver: resolver,
+		spillDir: tools.DefaultSpillDir(resolver.WorkDir()),
 	}
 }
 
@@ -63,7 +61,7 @@ func (t *ReadTool) Schema() llm.ToolSchema {
 		Properties: map[string]llm.Property{
 			"path": {
 				Type:        "string",
-				Description: "Relative path to the file to read",
+				Description: "Path to the file to read. Relative paths resolve under the workspace; absolute paths require workspace or external_read_roots access",
 			},
 			"offset": {
 				Type:        "integer",
@@ -84,6 +82,8 @@ type readParams struct {
 	Limit  int    `json:"limit"`
 }
 
+const emptyFilePlaceholder = "(file is empty)"
+
 // Execute executes the read tool.
 func (t *ReadTool) Execute(ctx context.Context, params json.RawMessage) (*tools.Result, error) {
 	var p readParams
@@ -91,9 +91,12 @@ func (t *ReadTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 		return withSourceMeta(tools.ErrorResult(err)), nil
 	}
 
-	fullPath, err := resolveSafePathWithOptions(t.workDir, p.Path, t.pathOptions)
+	fullPath, denial, err := t.resolver.ResolveReadablePathForOperation("read", p.Path, pathpolicy.ResolveOptionsFromContext(ctx))
 	if err != nil {
 		return withSourceMeta(tools.ErrorResult(err)), nil
+	}
+	if denial != nil {
+		return pathpolicy.NewPathDenialResult(denial), nil
 	}
 
 	// Check if file exists
@@ -134,6 +137,10 @@ func (t *ReadTool) Execute(ctx context.Context, params json.RawMessage) (*tools.
 	}
 	if truncated {
 		summary += " (truncated, full file saved to disk)"
+	}
+
+	if content == "" {
+		content = emptyFilePlaceholder
 	}
 
 	result := withSourceMeta(tools.StringResultWithSummary(content, summary))

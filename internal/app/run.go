@@ -16,6 +16,7 @@ import (
 	"gitcode.com/mindspore/mscli/agent/loop"
 	"gitcode.com/mindspore/mscli/agent/session"
 	"gitcode.com/mindspore/mscli/integrations/llm"
+	"gitcode.com/mindspore/mscli/internal/pathpolicy"
 	"gitcode.com/mindspore/mscli/internal/version"
 	"gitcode.com/mindspore/mscli/ui"
 	"gitcode.com/mindspore/mscli/ui/components"
@@ -246,6 +247,10 @@ func (a *Application) processInput(input string) {
 		return
 	}
 
+	if a.pathAuthorizer != nil && a.pathAuthorizer.HandleInput(trimmed) {
+		return
+	}
+
 	if a.permissionUI != nil && a.permissionUI.HandleInput(trimmed) {
 		return
 	}
@@ -265,12 +270,20 @@ func (a *Application) processInput(input string) {
 
 	expanded, err := a.expandInputText(trimmed)
 	if err != nil {
+		if a.tryAuthorizeInputExpansion(err, func(opts pathpolicy.ResolveOptions) {
+			expanded, retryErr := a.expandInputTextWithOptions(trimmed, opts)
+			if retryErr != nil {
+				a.emitInputExpansionError(retryErr)
+				return
+			}
+			a.processExpandedInput(expanded)
+		}) {
+			return
+		}
 		a.emitInputExpansionError(err)
 		return
 	}
-	a.EventCh <- model.Event{Type: model.UserInput, Message: expanded}
-
-	go a.runTask(expanded)
+	a.processExpandedInput(expanded)
 }
 
 func (a *Application) handlePermissionSettingsPromptInput(input string) {

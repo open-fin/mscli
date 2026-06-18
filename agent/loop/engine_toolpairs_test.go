@@ -18,6 +18,104 @@ func (p *responsesCaptureProvider) Name() string {
 	return string(llm.ProviderOpenAIResponses)
 }
 
+func TestCallLLMNormalizesEmptyToolResultsBeforeRequest(t *testing.T) {
+	provider := &captureProvider{}
+	engine := newEngineForContextTests(provider)
+
+	cm := ctxmanager.NewManager(ctxmanager.ManagerConfig{
+		ContextWindow: 8000,
+		ReserveTokens: 4000,
+	})
+	engine.SetContextManager(cm)
+
+	args, err := json.Marshal(map[string]string{"path": "empty.txt"})
+	if err != nil {
+		t.Fatalf("marshal args: %v", err)
+	}
+	if err := cm.AddMessage(llm.Message{
+		Role: "assistant",
+		ToolCalls: []llm.ToolCall{{
+			ID:   "call_empty",
+			Type: "function",
+			Function: llm.ToolCallFunc{
+				Name:      "read",
+				Arguments: args,
+			},
+		}},
+	}); err != nil {
+		t.Fatalf("AddMessage assistant failed: %v", err)
+	}
+	if err := cm.AddMessage(llm.NewToolMessage("call_empty", "")); err != nil {
+		t.Fatalf("AddMessage empty tool result failed: %v", err)
+	}
+
+	ex := &executor{engine: engine}
+	if _, err := ex.callLLM(context.Background()); err != nil {
+		t.Fatalf("callLLM failed: %v", err)
+	}
+
+	if provider.lastReq == nil || len(provider.lastReq.Messages) < 3 {
+		t.Fatalf("provider request messages = %#v", provider.lastReq)
+	}
+	if got := provider.lastReq.Messages[2].Content; got != emptyToolResultPlaceholder {
+		t.Fatalf("request tool content = %q, want %q", got, emptyToolResultPlaceholder)
+	}
+	sanitized := engine.ctxManager.GetNonSystemMessages()
+	if got := sanitized[1].Content; got != emptyToolResultPlaceholder {
+		t.Fatalf("context tool content = %q, want %q", got, emptyToolResultPlaceholder)
+	}
+}
+
+func TestCallLLMNormalizesEmptyResponsesFollowupToolResult(t *testing.T) {
+	provider := &responsesCaptureProvider{}
+	engine := newEngineForContextTests(provider)
+
+	cm := ctxmanager.NewManager(ctxmanager.ManagerConfig{
+		ContextWindow: 8000,
+		ReserveTokens: 4000,
+	})
+	engine.SetContextManager(cm)
+
+	args, err := json.Marshal(map[string]string{"path": "empty.txt"})
+	if err != nil {
+		t.Fatalf("marshal args: %v", err)
+	}
+	if err := cm.AddMessage(llm.Message{
+		Role: "assistant",
+		ToolCalls: []llm.ToolCall{{
+			ID:   "call_empty",
+			Type: "function",
+			Function: llm.ToolCallFunc{
+				Name:      "read",
+				Arguments: args,
+			},
+		}},
+	}); err != nil {
+		t.Fatalf("AddMessage assistant failed: %v", err)
+	}
+	if err := cm.AddMessage(llm.NewToolMessage("call_empty", "")); err != nil {
+		t.Fatalf("AddMessage empty tool result failed: %v", err)
+	}
+
+	ex := &executor{
+		engine:              engine,
+		responsesPreviousID: "resp_prev",
+		responsesFollowup: []llm.Message{
+			llm.NewToolMessage("call_empty", ""),
+		},
+	}
+	if _, err := ex.callLLM(context.Background()); err != nil {
+		t.Fatalf("callLLM failed: %v", err)
+	}
+
+	if provider.lastReq == nil || len(provider.lastReq.Messages) != 2 {
+		t.Fatalf("provider request messages = %#v", provider.lastReq)
+	}
+	if got := ex.responsesFollowup[0].Content; got != emptyToolResultPlaceholder {
+		t.Fatalf("responsesFollowup content = %q, want %q", got, emptyToolResultPlaceholder)
+	}
+}
+
 func TestCallLLMSanitizesUnpairedToolMessagesBeforeRequest(t *testing.T) {
 	provider := &captureProvider{}
 	engine := newEngineForContextTests(provider)

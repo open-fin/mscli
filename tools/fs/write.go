@@ -9,23 +9,22 @@ import (
 	"strings"
 
 	"gitcode.com/mindspore/mscli/integrations/llm"
+	"gitcode.com/mindspore/mscli/internal/pathpolicy"
 	"gitcode.com/mindspore/mscli/tools"
 )
 
 // WriteTool writes or creates file contents.
 type WriteTool struct {
-	workDir     string
-	pathOptions PathOptions
+	resolver *pathpolicy.Resolver
 }
 
 // NewWriteTool creates a new write tool.
 func NewWriteTool(workDir string) *WriteTool {
-	return NewWriteToolWithOptions(workDir, PathOptions{})
+	return NewWriteToolWithResolver(newWorkspaceResolver(workDir))
 }
 
-// NewWriteToolWithOptions creates a new write tool with additional path access.
-func NewWriteToolWithOptions(workDir string, opts PathOptions) *WriteTool {
-	return &WriteTool{workDir: workDir, pathOptions: opts}
+func NewWriteToolWithResolver(resolver *pathpolicy.Resolver) *WriteTool {
+	return &WriteTool{resolver: resolver}
 }
 
 // Name returns the tool name.
@@ -54,7 +53,7 @@ func (t *WriteTool) Schema() llm.ToolSchema {
 		Properties: map[string]llm.Property{
 			"path": {
 				Type:        "string",
-				Description: "Required. Relative path to the file to write. Use this exact field name; do not use file_path or filename.",
+				Description: "Required. Path to the file to write. Sprint 1 allows workspace paths only for writes. Use this exact field name; do not use file_path or filename.",
 			},
 			"content": {
 				Type:        "string",
@@ -90,9 +89,12 @@ func (t *WriteTool) Execute(ctx context.Context, params json.RawMessage) (*tools
 		return withSourceMeta(tools.ErrorResultf(`invalid_write_args: missing path (required keys: "path","content"; aliases "file_path"/"filename" are fallback only)`)), nil
 	}
 
-	fullPath, err := resolveSafePathWithOptions(t.workDir, path, t.pathOptions)
+	fullPath, denial, err := t.resolver.ResolveWritablePathForOperation("write", path, pathpolicy.ResolveOptionsFromContext(ctx))
 	if err != nil {
 		return withSourceMeta(tools.ErrorResult(err)), nil
+	}
+	if denial != nil {
+		return pathpolicy.NewPathDenialResult(denial), nil
 	}
 
 	// Ensure parent directory exists

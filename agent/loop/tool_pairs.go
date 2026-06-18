@@ -9,17 +9,22 @@ import (
 )
 
 type toolPairCleanupReport struct {
-	removedToolCalls   int
-	removedToolResults int
-	ids                []string
+	removedToolCalls      int
+	removedToolResults    int
+	normalizedToolResults int
+	ids                   []string
 }
 
 func (r toolPairCleanupReport) changed() bool {
+	return r.removedToolCalls > 0 || r.removedToolResults > 0 || r.normalizedToolResults > 0
+}
+
+func (r toolPairCleanupReport) removedPairs() bool {
 	return r.removedToolCalls > 0 || r.removedToolResults > 0
 }
 
 func (r toolPairCleanupReport) warningMessage() string {
-	if !r.changed() {
+	if !r.removedPairs() {
 		return ""
 	}
 
@@ -176,6 +181,11 @@ func sanitizeMessagesForValidToolCallIDs(messages []llm.Message, valid map[strin
 				report.removedToolResults++
 				removedIDs[id] = struct{}{}
 				continue
+			}
+			normalized := normalizeToolResultContent(msg.Content)
+			if normalized != msg.Content {
+				report.normalizedToolResults++
+				msg.Content = normalized
 			}
 			sanitized = append(sanitized, msg)
 

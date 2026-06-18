@@ -6,12 +6,12 @@ MindSpore Model Agent 是一个面向 MindSpore 生态的、聚焦模型训练�
 
 它由两个紧密相关的部分组成：
 
-- [`mindspore-skills`](https://github.com/mindspore-lab/mindspore-skills)：面向模型训练与调试任务的领域能力层，提供可复用的技能，包括 readiness 检查、failure diagnosis、accuracy analysis、performance analysis、model migration、algorithm adaptation 和 operator implementation。这些 skills 不仅可用于 MindSpore Model Agent，也可以与 Claude Code、OpenCode、Codex 等其他 agentic CLI 环境配合使用。
-- `mindspore-cli`：MindSpore Model Agent 的官方 CLI。它与相关 skills 有更好的集成，并针对模型训练场景进行了优化，提供更统一的端到端训练任务交互体验。
+- [`mindspore-skills`](https://gitcode.com/mindspore/mindspore-skills)：面向模型训练与调试任务的领域能力层，提供可复用的技能，包括 readiness 检查、failure diagnosis、accuracy analysis、performance analysis、model migration、algorithm adaptation 和 operator implementation。这些 skills 不仅可用于 MindSpore Model Agent，也可以与 Claude Code、OpenCode、Codex 等其他 agentic CLI 环境配合使用。
+- `mscli`：MindSpore Model Agent 的官方 CLI。它与相关 skills 有更好的集成，并针对模型训练场景进行了优化，提供更统一的端到端训练任务交互体验。
 
 ## 最新版本
 
-最新版本：`MindSpore Model Agent v0.1.3`。更新历史请参见 [changelog.md](changelog.md)。
+最新版本：`MindSpore Model Agent v0.1.4`。更新历史请参见 [changelog.md](changelog.md)。
 
 亮点包括：
 

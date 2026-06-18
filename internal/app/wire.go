@@ -19,6 +19,7 @@ import (
 	"gitcode.com/mindspore/mscli/integrations/llm"
 	"gitcode.com/mindspore/mscli/integrations/skills"
 	factoryruntime "gitcode.com/mindspore/mscli/internal/factory/runtime"
+	"gitcode.com/mindspore/mscli/internal/pathpolicy"
 	itrain "gitcode.com/mindspore/mscli/internal/train"
 	"gitcode.com/mindspore/mscli/internal/version"
 	"gitcode.com/mindspore/mscli/permission"
@@ -56,6 +57,10 @@ type Application struct {
 	permService             permission.PermissionService
 	permissionUI            *PermissionPromptUI
 	questionUI              *AskUserQuestionPromptUI
+	pathResolver            *pathpolicy.Resolver
+	pathAuthorizer          *PathAuthorizer
+	inputExpansionMu        sync.Mutex
+	pendingInputExpansion   *pendingInputExpansion
 	permissionSettingsIssue *permissionSettingsIssue
 	mcpManager              runtimemcp.Manager
 	session                 *session.Session
@@ -188,7 +193,10 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 		return nil, fmt.Errorf("init memory: %w", err)
 	}
 
-	toolRegistry := initTools(config, workDir, memoryCfg)
+	pathPolicy := pathpolicy.NewPathPolicyWithWriteRoots(workDir, config.Filesystem.ExternalReadRoots, config.Filesystem.ExternalWriteRoots, fs.BuiltinReadRoots())
+	addMemoryPathRoot(pathPolicy, memoryCfg)
+	pathResolver := pathpolicy.NewResolver(pathPolicy)
+	toolRegistry := initTools(config, workDir, pathResolver)
 	var (
 		mcpManager       runtimemcp.Manager
 		mcpStartupEvents []model.Event
@@ -358,6 +366,8 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 			}
 		}
 	}
+	pathAuthorizer := NewPathAuthorizerWithWrite(eventCh, pathPolicy, configs.SaveUserExternalReadRoots, configs.SaveUserExternalWriteRoots)
+	engine.SetPathAuthorizer(pathAuthorizer)
 	engine.SetPermissionService(permService)
 
 	app := &Application{
@@ -373,6 +383,8 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 		permService:             permService,
 		permissionUI:            permissionUI,
 		questionUI:              questionUI,
+		pathResolver:            pathResolver,
+		pathAuthorizer:          pathAuthorizer,
 		permissionSettingsIssue: permSettingsIssue,
 		mcpManager:              mcpManager,
 		session:                 runtimeSession,
@@ -491,7 +503,8 @@ func (a *Application) refreshEngineSessionBindings() {
 		a.ctxManager.SetTrajectoryPath(trajectoryPath)
 	}
 	a.Engine.SetLLMDebugDumper(a.llmDebugDumper)
-	a.Engine.SetTrajectoryRecorder(newTrajectoryRecorder(a.session, a.ctxManager, a.WorkDir, a.memoryConfig, a.noteLiveLLMActivity))
+	a.Engine.SetPathAuthorizer(a.pathAuthorizer)
+	a.Engine.SetTrajectoryRecorder(newTrajectoryRecorder(a.session, a.ctxManager, a.WorkDir, a.pathResolver, a.memoryConfig, a.noteLiveLLMActivity))
 }
 
 func (a *Application) dumpPreCompactSnapshot(snapshot agentctx.CompactSnapshot) error {
@@ -634,6 +647,7 @@ func (a *Application) SetProvider(providerName, modelName, apiKey string) error 
 	}
 	newEngine.SetContextManager(a.ctxManager)
 	newEngine.SetPermissionService(a.permService)
+	newEngine.SetPathAuthorizer(a.pathAuthorizer)
 
 	a.Engine = newEngine
 	a.provider = provider
@@ -658,7 +672,7 @@ func initProvider(cfg configs.ModelConfig, opts llm.ResolveOptions) (llm.Provide
 	return client, nil
 }
 
-func newTrajectoryRecorder(s *session.Session, cm *agentctx.Manager, workDir string, memoryCfg autoMemoryConfig, noteLiveLLMActivity func() error) *loop.TrajectoryRecorder {
+func newTrajectoryRecorder(s *session.Session, cm *agentctx.Manager, workDir string, resolver *pathpolicy.Resolver, memoryCfg autoMemoryConfig, noteLiveLLMActivity func() error) *loop.TrajectoryRecorder {
 	ensureSessionActive := func() error {
 		if noteLiveLLMActivity == nil {
 			return nil
@@ -718,11 +732,12 @@ func newTrajectoryRecorder(s *session.Session, cm *agentctx.Manager, workDir str
 			}
 			return s.AppendContextCompaction(trigger, beforeTokens, afterTokens, message)
 		},
-		PrepareFileMutation: func(tc llm.ToolCall) error {
+		PrepareFileMutation: func(ctx context.Context, tc llm.ToolCall) error {
 			if s == nil {
 				return nil
 			}
-			switch strings.TrimSpace(tc.Function.Name) {
+			toolName := strings.TrimSpace(tc.Function.Name)
+			switch toolName {
 			case "write", "edit":
 			default:
 				return nil
@@ -732,12 +747,15 @@ func newTrajectoryRecorder(s *session.Session, cm *agentctx.Manager, workDir str
 			if err != nil {
 				return err
 			}
-			if strings.TrimSpace(path) == "" {
+			if strings.TrimSpace(path) == "" || resolver == nil {
 				return nil
 			}
-			fullPath, err := fs.ResolveSafePathWithOptions(workDir, path, fsPathOptionsForMemory(memoryCfg))
+			fullPath, denial, err := resolver.ResolveWritablePathForOperation(toolName, path, pathpolicy.ResolveOptionsFromContext(ctx))
 			if err != nil {
 				return err
+			}
+			if denial != nil {
+				return nil
 			}
 			if memoryCfg.Enabled && pathWithinAppRoot(memoryCfg.Dir, fullPath) {
 				return nil
@@ -857,15 +875,18 @@ func (a *Application) emitModelSetupPopup(canEscape bool) {
 	}
 }
 
-func initTools(cfg *configs.Config, workDir string, memoryCfg autoMemoryConfig) *tools.Registry {
+func initTools(cfg *configs.Config, workDir string, resolvers ...*pathpolicy.Resolver) *tools.Registry {
 	registry := tools.NewRegistry()
+	pathResolver := pathpolicy.NewResolver(pathpolicy.NewPathPolicyWithWriteRoots(workDir, cfg.Filesystem.ExternalReadRoots, cfg.Filesystem.ExternalWriteRoots, fs.BuiltinReadRoots()))
+	if len(resolvers) > 0 && resolvers[0] != nil {
+		pathResolver = resolvers[0]
+	}
 
-	pathOptions := fsPathOptionsForMemory(memoryCfg)
-	registry.MustRegister(fs.NewReadToolWithOptions(workDir, pathOptions))
-	registry.MustRegister(fs.NewWriteToolWithOptions(workDir, pathOptions))
-	registry.MustRegister(fs.NewEditToolWithOptions(workDir, pathOptions))
-	registry.MustRegister(fs.NewGrepToolWithOptions(workDir, pathOptions))
-	registry.MustRegister(fs.NewGlobToolWithOptions(workDir, pathOptions))
+	registry.MustRegister(fs.NewReadToolWithResolver(pathResolver))
+	registry.MustRegister(fs.NewWriteToolWithResolver(pathResolver))
+	registry.MustRegister(fs.NewEditToolWithResolver(pathResolver))
+	registry.MustRegister(fs.NewGrepToolWithResolver(pathResolver))
+	registry.MustRegister(fs.NewGlobToolWithResolver(pathResolver))
 
 	shellRunner := rshell.NewRunner(rshell.Config{
 		WorkDir:        workDir,
@@ -884,11 +905,11 @@ func initTools(cfg *configs.Config, workDir string, memoryCfg autoMemoryConfig) 
 	return registry
 }
 
-func fsPathOptionsForMemory(memoryCfg autoMemoryConfig) fs.PathOptions {
-	if !memoryCfg.Enabled || strings.TrimSpace(memoryCfg.Dir) == "" {
-		return fs.PathOptions{}
+func addMemoryPathRoot(policy *pathpolicy.PathPolicy, memoryCfg autoMemoryConfig) {
+	if policy == nil || !memoryCfg.Enabled || strings.TrimSpace(memoryCfg.Dir) == "" {
+		return
 	}
-	return fs.PathOptions{AllowedAbsoluteRoots: []string{memoryCfg.Dir}}
+	policy.AddSessionWriteRoot(memoryCfg.Dir)
 }
 
 func pathWithinAppRoot(root, target string) bool {

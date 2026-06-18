@@ -13,6 +13,7 @@ import (
 	agentctx "gitcode.com/mindspore/mscli/agent/context"
 	"gitcode.com/mindspore/mscli/configs"
 	"gitcode.com/mindspore/mscli/integrations/llm"
+	"gitcode.com/mindspore/mscli/internal/pathpolicy"
 	"gitcode.com/mindspore/mscli/permission"
 	runtimemcp "gitcode.com/mindspore/mscli/runtime/mcp"
 	"gitcode.com/mindspore/mscli/ui/model"
@@ -58,40 +59,15 @@ func (a *Application) handleCommand(input string) {
 		a.EventCh <- model.Event{Type: model.AgentReply, Message: "Coming soon."}
 		return
 	case "/diagnose":
-		expanded, err := a.expandIssueCommandInput(cmd.Remainder)
-		if err != nil {
-			a.emitInputExpansionError(err)
-			return
-		}
-		a.cmdDiagnose(expanded)
+		a.handleExpandableCommand(cmd.Remainder, a.expandIssueCommandInputWithOptions, a.cmdDiagnose)
 	case "/fix":
-		expanded, err := a.expandIssueCommandInput(cmd.Remainder)
-		if err != nil {
-			a.emitInputExpansionError(err)
-			return
-		}
-		a.cmdFix(expanded)
+		a.handleExpandableCommand(cmd.Remainder, a.expandIssueCommandInputWithOptions, a.cmdFix)
 	case "/migrate":
-		expanded, err := a.expandIssueCommandInput(cmd.Remainder)
-		if err != nil {
-			a.emitInputExpansionError(err)
-			return
-		}
-		a.cmdMigrate(expanded)
+		a.handleExpandableCommand(cmd.Remainder, a.expandIssueCommandInputWithOptions, a.cmdMigrate)
 	case "/integrate":
-		expanded, err := a.expandIssueCommandInput(cmd.Remainder)
-		if err != nil {
-			a.emitInputExpansionError(err)
-			return
-		}
-		a.cmdIntegrate(expanded)
+		a.handleExpandableCommand(cmd.Remainder, a.expandIssueCommandInputWithOptions, a.cmdIntegrate)
 	case "/preflight":
-		expanded, err := a.expandInputText(cmd.Remainder)
-		if err != nil {
-			a.emitInputExpansionError(err)
-			return
-		}
-		a.cmdPreflight(expanded)
+		a.handleExpandableCommand(cmd.Remainder, a.expandInputTextWithOptions, a.cmdPreflight)
 	case "/factory":
 		a.cmdFactory(cmd.Remainder)
 	case "/mcp":
@@ -121,6 +97,25 @@ func (a *Application) handleCommand(input string) {
 			Message: fmt.Sprintf("Unknown command: %s. Type / to see available commands.", cmd.Name),
 		}
 	}
+}
+
+func (a *Application) handleExpandableCommand(raw string, expand func(string, pathpolicy.ResolveOptions) (string, error), run func(string)) {
+	expanded, err := expand(raw, pathpolicy.ResolveOptions{})
+	if err != nil {
+		if a.tryAuthorizeInputExpansion(err, func(opts pathpolicy.ResolveOptions) {
+			expanded, retryErr := expand(raw, opts)
+			if retryErr != nil {
+				a.emitInputExpansionError(retryErr)
+				return
+			}
+			run(expanded)
+		}) {
+			return
+		}
+		a.emitInputExpansionError(err)
+		return
+	}
+	run(expanded)
 }
 
 func (a *Application) cmdMCP(args []string) {
@@ -487,15 +482,28 @@ func (a *Application) handleRawSkillCommand(rawInput string) error {
 		return nil
 	}
 
-	if request != "" {
-		expanded, err := a.expandInputText(request)
-		if err != nil {
-			return err
-		}
-		request = expanded
+	run := func(expanded string) {
+		a.runLoadedSkillCommand(skillName, expanded)
 	}
-
-	a.runLoadedSkillCommand(skillName, request)
+	if request == "" {
+		run("")
+		return nil
+	}
+	expanded, err := a.expandInputTextWithOptions(request, pathpolicy.ResolveOptions{})
+	if err != nil {
+		if a.tryAuthorizeInputExpansion(err, func(opts pathpolicy.ResolveOptions) {
+			expanded, retryErr := a.expandInputTextWithOptions(request, opts)
+			if retryErr != nil {
+				a.emitInputExpansionError(retryErr)
+				return
+			}
+			run(expanded)
+		}) {
+			return nil
+		}
+		return err
+	}
+	run(expanded)
 	return nil
 }
 
@@ -513,15 +521,28 @@ func (a *Application) handleSkillAliasCommand(commandName, rawRemainder string) 
 	}
 
 	request := strings.TrimSpace(rawRemainder)
-	if request != "" {
-		expanded, err := a.expandInputText(request)
-		if err != nil {
-			return true, err
-		}
-		request = expanded
+	run := func(expanded string) {
+		a.runLoadedSkillCommand(skillName, expanded)
 	}
-
-	a.runLoadedSkillCommand(skillName, request)
+	if request == "" {
+		run("")
+		return true, nil
+	}
+	expanded, err := a.expandInputTextWithOptions(request, pathpolicy.ResolveOptions{})
+	if err != nil {
+		if a.tryAuthorizeInputExpansion(err, func(opts pathpolicy.ResolveOptions) {
+			expanded, retryErr := a.expandInputTextWithOptions(request, opts)
+			if retryErr != nil {
+				a.emitInputExpansionError(retryErr)
+				return
+			}
+			run(expanded)
+		}) {
+			return true, nil
+		}
+		return true, err
+	}
+	run(expanded)
 	return true, nil
 }
 
