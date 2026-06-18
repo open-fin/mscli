@@ -55,6 +55,7 @@ mscli/
     app/                   bootstrap, wiring, commands, startup, train flow
     factory/               local Factory card, pack, compiler, and runtime logic
     issues/                local issue model used by diagnose/fix flows
+    pathpolicy/            workspace and external path access policy
     train/                 training types and target abstraction
     update/                binary update checker
     workspacefile/         workspace path validation
@@ -73,12 +74,15 @@ mscli/
   permission/              permission service, types, safe command allowlist
   report/                  report data structures and helpers
   runtime/
+    artifacts/             state-root artifact writer for large tool results
+    mcp/                   MCP config, approvals, stdio JSON-RPC, and server lifecycle
     shell/                 stateful shell runner
     probes/                unified probe result model
       local/               local-side readiness probes
       target/              remote target readiness probes
   tools/
     fs/                    filesystem tool implementations
+    mcp/                   MCP tool adapter into the local tools.Tool interface
     shell/                 shell tool wrapper
     skills/                skill loading tool
   ui/                      Bubble Tea app, panels, slash commands, model
@@ -92,7 +96,7 @@ mscli/
 The current primary runtime path is:
 
 ```text
-cmd/mscli -> internal/app -> agent/loop -> tools -> runtime/shell
+cmd/mscli -> internal/app -> agent/loop -> tools -> runtime/shell, runtime/mcp, runtime/artifacts
 ```
 
 Important current details:
