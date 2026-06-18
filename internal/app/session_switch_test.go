@@ -133,6 +133,9 @@ func TestCmdResumeSwitchesConversationAndShowsReturnHint(t *testing.T) {
 	if got, want := app.session.ID(), target.ID(); got != want {
 		t.Fatalf("active session id = %q, want %q", got, want)
 	}
+	if !app.resumeHintOnExit.Load() {
+		t.Fatal("expected resumeHintOnExit after /resume")
+	}
 	if got, want := app.ctxManager.TokenUsage().Current, 1830; got != want {
 		t.Fatalf("ctx current after resume = %d, want %d", got, want)
 	}

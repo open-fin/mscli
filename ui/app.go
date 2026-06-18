@@ -201,6 +201,7 @@ type App struct {
 	trainFocus              model.TrainPanelID
 	bootActive              bool
 	startupBannerSuppressed bool
+	initialInput            string
 	bootHighlight           int
 	bannerPrinted           bool
 	queuedInputs            []string
@@ -266,6 +267,12 @@ func (a App) WithStartupBannerSuppressed() App {
 	return a
 }
 
+// WithInitialInput submits one prompt automatically once the boot splash exits.
+func (a App) WithInitialInput(value string) App {
+	a.initialInput = strings.TrimSpace(value)
+	return a
+}
+
 // WithInputHistoryAppender installs the persistence hook for submitted prompts.
 func (a App) WithInputHistoryAppender(fn func(string)) App {
 	a.appendHistoryFn = fn
@@ -280,6 +287,61 @@ func (a App) rememberInput(value string) App {
 	}
 	return a
 }
+
+func (a App) submitInitialInput() (App, tea.Cmd) {
+	value := strings.TrimSpace(a.initialInput)
+	if value == "" {
+		return a, nil
+	}
+	a.initialInput = ""
+	return a.submitInputValue(value, false)
+}
+
+func (a App) submitInputValue(value string, resetComposer bool) (App, tea.Cmd) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return a, nil
+	}
+
+	if a.shouldQueueInput(value) {
+		if !strings.HasPrefix(value, "/") {
+			a.suppressUserEventPrints++
+		}
+		a.queuedInputs = append(a.queuedInputs, value)
+		a = a.rememberInput(value)
+		if resetComposer {
+			a.input = a.input.Reset()
+		}
+		a.resizeActiveLayout()
+		return a, a.printUserInput(value)
+	}
+
+	a.state = a.state.ResetStats()
+	a.replayWait = nil
+	a.state = a.clearThinking()
+	if !strings.HasPrefix(value, "/") && !shouldDeferUserEcho(value) {
+		a.state = a.state.WithMessage(model.Message{Kind: model.MsgUser, Content: value})
+		a.state = a.startWait(model.WaitModel)
+	}
+	if !strings.HasPrefix(value, "/") {
+		a.suppressUserEventPrints++
+	}
+	a = a.rememberInput(value)
+	if resetComposer {
+		a.input = a.input.Reset()
+	}
+	a.resizeActiveLayout()
+	printCmd := a.printUserInput(value)
+	if a.userCh != nil {
+		select {
+		case a.userCh <- value:
+		default:
+			// drop if buffer full — avoids freezing the UI
+		}
+	}
+	return a, printCmd
+}
+
 func (a App) waitForEvent() tea.Msg {
 	// Prevent multiple goroutines from reading the event channel
 	// concurrently — that causes non-deterministic event ordering.
@@ -393,7 +455,13 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case bootDoneMsg:
 		a.bootActive = false
-		return a, a.maybePrintBanner()
+		bannerCmd := a.maybePrintBanner()
+		var inputCmd tea.Cmd
+		a, inputCmd = a.submitInitialInput()
+		if bannerCmd != nil && inputCmd != nil {
+			return a, tea.Sequence(bannerCmd, inputCmd)
+		}
+		return a, combineCmds(bannerCmd, inputCmd)
 
 	case model.Event:
 		return a.handleEvent(msg)
@@ -1088,39 +1156,7 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return a, nil
 		}
-		if a.shouldQueueInput(val) {
-			if !strings.HasPrefix(val, "/") {
-				a.suppressUserEventPrints++
-			}
-			a.queuedInputs = append(a.queuedInputs, val)
-			a = a.rememberInput(val)
-			a.input = a.input.Reset()
-			a.resizeActiveLayout()
-			return a, a.printUserInput(val)
-		}
-		// Reset stats for new task
-		a.state = a.state.ResetStats()
-		a.replayWait = nil
-		a.state = a.clearThinking()
-		if !strings.HasPrefix(val, "/") && !shouldDeferUserEcho(val) {
-			a.state = a.state.WithMessage(model.Message{Kind: model.MsgUser, Content: val})
-			a.state = a.startWait(model.WaitModel)
-		}
-		if !strings.HasPrefix(val, "/") {
-			a.suppressUserEventPrints++
-		}
-		a = a.rememberInput(val)
-		a.input = a.input.Reset()
-		a.resizeActiveLayout()
-		printCmd := a.printUserInput(val)
-		if a.userCh != nil {
-			select {
-			case a.userCh <- val:
-			default:
-				// drop if buffer full — avoids freezing the UI
-			}
-		}
-		return a, printCmd
+		return a.submitInputValue(val, true)
 
 	case "home", "end":
 		var cmd tea.Cmd

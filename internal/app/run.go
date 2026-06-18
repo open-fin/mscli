@@ -42,10 +42,13 @@ const (
 type bootstrapHelpTopic string
 
 const (
-	bootstrapHelpTopicRoot    bootstrapHelpTopic = "root"
-	bootstrapHelpTopicResume  bootstrapHelpTopic = "resume"
-	bootstrapHelpTopicReplay  bootstrapHelpTopic = "replay"
-	bootstrapHelpTopicFactory bootstrapHelpTopic = "factory"
+	bootstrapHelpTopicRoot     bootstrapHelpTopic = "root"
+	bootstrapHelpTopicResume   bootstrapHelpTopic = "resume"
+	bootstrapHelpTopicReplay   bootstrapHelpTopic = "replay"
+	bootstrapHelpTopicFactory  bootstrapHelpTopic = "factory"
+	bootstrapHelpTopicFix      bootstrapHelpTopic = "fix"
+	bootstrapHelpTopicDiagnose bootstrapHelpTopic = "diagnose"
+	bootstrapHelpTopicExec     bootstrapHelpTopic = "exec"
 )
 
 type bootstrapHelpError struct {
@@ -110,6 +113,9 @@ func Run(args []string) error {
 	if err != nil {
 		return err
 	}
+	if cfg.HeadlessCommand != "" {
+		return app.runHeadlessCommand(cfg.HeadlessCommand, cfg.InitialInput, cliStdout)
+	}
 
 	return app.run()
 }
@@ -163,6 +169,9 @@ func (a *Application) runReal() error {
 	}
 	if history, err := loadInputHistoryForWorkdir(a.WorkDir); err == nil {
 		tui = tui.SeedInputHistory(history)
+	}
+	if input := strings.TrimSpace(a.initialInput); input != "" && !a.replayOnly && a.startupSessionPicker == nil {
+		tui = tui.WithInitialInput(input)
 	}
 	tui = tui.WithInputHistoryAppender(func(text string) {
 		_ = appendInputHistory(a.WorkDir, text)
@@ -744,7 +753,7 @@ func (a *Application) exitResumeHint() string {
 	if a == nil || a.replayOnly || a.session == nil {
 		return ""
 	}
-	if !a.sessionLLMActivity.Load() {
+	if !a.sessionLLMActivity.Load() && !a.resumeHintOnExit.Load() {
 		return ""
 	}
 	return cliResumeHintForSession(a.session.ID())
@@ -868,6 +877,10 @@ func parseBootstrapConfig(args []string) (BootstrapConfig, error) {
 		return cfg, nil
 	}
 
+	if len(args) > 0 && isHeadlessBootstrapCommand(args[0]) {
+		return parseHeadlessBootstrapConfig(args[0], args[1:])
+	}
+
 	fs := newBootstrapFlagSet("mscli")
 	url, modelFlag, apiKey, debug := registerCommonBootstrapFlags(fs)
 
@@ -877,16 +890,60 @@ func parseBootstrapConfig(args []string) (BootstrapConfig, error) {
 		}
 		return BootstrapConfig{}, err
 	}
-	if len(fs.Args()) > 0 {
-		return BootstrapConfig{}, fmt.Errorf("unknown subcommand: %s", fs.Args()[0])
-	}
+	initialInput := strings.TrimSpace(strings.Join(fs.Args(), " "))
 
 	return BootstrapConfig{
-		URL:   *url,
-		Model: *modelFlag,
-		Key:   *apiKey,
-		Debug: *debug,
+		URL:          *url,
+		Model:        *modelFlag,
+		Key:          *apiKey,
+		Debug:        *debug,
+		InitialInput: initialInput,
 	}, nil
+}
+
+func isHeadlessBootstrapCommand(command string) bool {
+	switch command {
+	case "fix", "diagnose", "exec":
+		return true
+	default:
+		return false
+	}
+}
+
+func parseHeadlessBootstrapConfig(command string, args []string) (BootstrapConfig, error) {
+	fs := newBootstrapFlagSet("mscli " + command)
+	url, modelFlag, apiKey, debug := registerCommonBootstrapFlags(fs)
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return BootstrapConfig{}, bootstrapHelpError{topic: bootstrapHelpTopicForCommand(command)}
+		}
+		return BootstrapConfig{}, err
+	}
+	initialInput := strings.TrimSpace(strings.Join(fs.Args(), " "))
+	if initialInput == "" {
+		return BootstrapConfig{}, fmt.Errorf("usage: mscli %s [flags] %s", command, headlessUsageArg(command))
+	}
+	return BootstrapConfig{
+		URL:             *url,
+		Model:           *modelFlag,
+		Key:             *apiKey,
+		Debug:           *debug,
+		InitialInput:    initialInput,
+		HeadlessCommand: command,
+	}, nil
+}
+
+func bootstrapHelpTopicForCommand(command string) bootstrapHelpTopic {
+	switch command {
+	case "fix":
+		return bootstrapHelpTopicFix
+	case "diagnose":
+		return bootstrapHelpTopicDiagnose
+	case "exec":
+		return bootstrapHelpTopicExec
+	default:
+		return bootstrapHelpTopicRoot
+	}
 }
 
 func parseReplayTargetAndSpeed(args []string) (string, float64, error) {
@@ -954,6 +1011,12 @@ Examples:
   mscli resume
   mscli resume sess_123
 `
+	case bootstrapHelpTopicFix:
+		return renderHeadlessBootstrapHelp("fix")
+	case bootstrapHelpTopicDiagnose:
+		return renderHeadlessBootstrapHelp("diagnose")
+	case bootstrapHelpTopicExec:
+		return renderHeadlessBootstrapHelp("exec")
 	case bootstrapHelpTopicReplay:
 		return `Replay a saved session or recorded trajectory, then keep chatting.
 
@@ -989,6 +1052,9 @@ Commands:
   resume    Resume a saved session; opens the session picker UI by default
   replay    Replay a saved session or trajectory; opens the session picker UI by default
   factory   Run non-interactive Factory commands for external agents, shell scripts, and CI
+  fix       Run /fix headlessly with YOLO enabled and print stdout
+  diagnose  Run /diagnose headlessly with YOLO enabled and print stdout
+  exec      Run a free-form task headlessly with YOLO enabled and print stdout
 
 Flags:
   --url string
@@ -1010,6 +1076,10 @@ In-app commands:
 
 Examples:
   mscli
+  mscli "why does this MindSpore run fail?"
+  mscli exec "inspect this repository"
+  mscli fix "fix the training failure in ./train.py"
+  mscli diagnose ISSUE-42
   MSCLI_PROVIDER=openai-completion MSCLI_API_KEY=sk-... MSCLI_MODEL=gpt-4o mscli
   mscli resume sess_xxx
   mscli replay sess_xxx
@@ -1028,6 +1098,52 @@ Environment:
         Optional base URL override for compatible providers.
 `
 	}
+}
+
+func renderHeadlessBootstrapHelp(command string) string {
+	description := fmt.Sprintf("Run /%s without opening the TUI.", command)
+	usageArg := headlessUsageArg(command)
+	argumentLabel := "problem text|ISSUE-id"
+	argument := "Free-form request text or an issue ID such as ISSUE-42."
+	examples := fmt.Sprintf(`  mscli %s "fix the failing MindSpore training script"
+  mscli %s ISSUE-42`, command, command)
+	if command == "exec" {
+		description = "Run a free-form task without opening the TUI."
+		argumentLabel = "task"
+		argument = "Free-form request text."
+		examples = `  mscli exec "inspect this repository"`
+	}
+	return fmt.Sprintf(`%s YOLO mode is enabled for the run, agent output is printed to stdout, and the process exits when the agent returns.
+
+Usage:
+  mscli %s [flags] %s
+
+Arguments:
+  %s
+        %s
+
+Flags:
+  --url string
+        %s
+  --model string
+        %s
+  --api-key string
+        %s
+  --debug
+        %s
+  -h, --help
+        Show help for %s
+
+Examples:
+%s
+`, description, command, usageArg, argumentLabel, argument, bootstrapFlagDescURL, bootstrapFlagDescModel, bootstrapFlagDescAPIKey, bootstrapFlagDescDebug, command, examples)
+}
+
+func headlessUsageArg(command string) string {
+	if command == "exec" {
+		return "<task>"
+	}
+	return "<problem text|ISSUE-id>"
 }
 
 func parseReplaySpeed(raw string) (float64, bool) {

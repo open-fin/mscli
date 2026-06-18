@@ -72,7 +72,9 @@ type Application struct {
 	replayOnly              bool
 	replaySpeed             float64
 	sessionLLMActivity      atomic.Bool
+	resumeHintOnExit        atomic.Bool
 	sessionStoreReady       atomic.Bool
+	initialInput            string
 
 	// Skills
 	skillLoader   *skills.Loader
@@ -116,6 +118,8 @@ type BootstrapConfig struct {
 	Model               string
 	Key                 string
 	Debug               bool
+	InitialInput        string
+	HeadlessCommand     string
 	Resume              bool
 	ResumeSessionID     string
 	Replay              bool
@@ -394,12 +398,14 @@ func Wire(cfg BootstrapConfig) (*Application, error) {
 		deferHistoryReplay:      cfg.Resume && !cfg.Replay && startupSessionPicker == nil,
 		replayOnly:              cfg.Replay && startupSessionPicker == nil,
 		replaySpeed:             replaySpeedOrDefault(cfg.ReplaySpeed),
+		initialInput:            strings.TrimSpace(cfg.InitialInput),
 		llmReady:                llmReady,
 		skillLoader:             skillLoader,
 		skillsHomeDir:           strings.TrimSpace(homeDir),
 		needsSetupPopup:         needsSetupPopup,
 		startupSessionPicker:    startupSessionPicker,
 	}
+	app.resumeHintOnExit.Store(cfg.Resume && startupSessionPicker == nil)
 	permissionUI.SetYOLOCallbacks(
 		func() bool {
 			if svc, ok := app.permService.(*permission.DefaultPermissionService); ok {
@@ -574,6 +580,7 @@ func (a *Application) rotateSession() error {
 	previous := a.session
 	a.session = nextSession
 	a.sessionLLMActivity.Store(false)
+	a.resumeHintOnExit.Store(false)
 	a.sessionStoreReady.Store(false)
 	if a.ctxManager != nil {
 		a.ctxManager.SetSystemPrompt(systemPrompt)

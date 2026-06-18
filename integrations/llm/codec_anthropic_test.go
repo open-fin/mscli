@@ -86,6 +86,59 @@ func TestAnthropicEncodeRequestUsesStructuredTextParts(t *testing.T) {
 	}
 }
 
+func TestAnthropicEncodeRequestMergesConsecutiveToolResults(t *testing.T) {
+	req, err := newAnthropicCodec("deepseek-v4-pro").encodeRequest(&CompletionRequest{
+		Messages: []Message{
+			NewUserMessage("inspect the repo"),
+			{
+				Role: "assistant",
+				ToolCalls: []ToolCall{
+					{
+						ID:   "call_1",
+						Type: "function",
+						Function: ToolCallFunc{
+							Name:      "read",
+							Arguments: json.RawMessage(`{"path":"README.md"}`),
+						},
+					},
+					{
+						ID:   "call_2",
+						Type: "function",
+						Function: ToolCallFunc{
+							Name:      "glob",
+							Arguments: json.RawMessage(`{"pattern":"**/*"}`),
+						},
+					},
+				},
+			},
+			NewToolMessage("call_1", "read result"),
+			NewToolMessage("call_2", "glob result"),
+		},
+	}, false)
+	if err != nil {
+		t.Fatalf("encodeRequest() error = %v", err)
+	}
+
+	if got, want := len(req.Messages), 3; got != want {
+		t.Fatalf("messages = %d, want %d", got, want)
+	}
+	toolResults := req.Messages[2]
+	if got, want := toolResults.Role, "user"; got != want {
+		t.Fatalf("tool result message role = %q, want %q", got, want)
+	}
+	if got, want := len(toolResults.Content), 2; got != want {
+		t.Fatalf("tool result blocks = %d, want %d", got, want)
+	}
+	if got, want := toolResults.Content[0].Type, "tool_result"; got != want {
+		t.Fatalf("blocks[0].Type = %q, want %q", got, want)
+	}
+	if got, want := toolResults.Content[0].ToolUseID, "call_1"; got != want {
+		t.Fatalf("blocks[0].ToolUseID = %q, want %q", got, want)
+	}
+	if got, want := toolResults.Content[1].ToolUseID, "call_2"; got != want {
+		t.Fatalf("blocks[1].ToolUseID = %q, want %q", got, want)
+	}
+}
 func TestAnthropicStreamIteratorAccumulatesToolUseJSONWithoutBuilderCopyPanic(t *testing.T) {
 	stream := strings.Join([]string{
 		mustAnthropicSSEEvent(t, "message_start", anthropicStreamMessageStartEvent{

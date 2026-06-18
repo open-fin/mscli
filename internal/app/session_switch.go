@@ -241,6 +241,7 @@ func (a *Application) bindConversation(loaded *loadedConversation, opts sessionS
 	a.replayOnly = opts.Replay
 	a.replaySpeed = replaySpeedOrDefault(opts.ReplaySpeed)
 	a.sessionLLMActivity.Store(false)
+	a.resumeHintOnExit.Store(!opts.Replay)
 	a.sessionStoreReady.Store(false)
 
 	if a.ctxManager != nil {
