@@ -59,6 +59,46 @@ func TestRequestAskWithoutUIDenies(t *testing.T) {
 	}
 }
 
+func TestUnsafeCommandsAreNotAutoAllowed(t *testing.T) {
+	svc := NewDefaultPermissionService(configs.PermissionsConfig{
+		DefaultLevel: "ask",
+	})
+	commands := []string{
+		"sed -i s/old/new/ file.txt",
+		`awk 'BEGIN { system("touch marker") }'`,
+		"go run ./cmd/tool",
+		`python -c "print('code')"`,
+		`python3 -c "print('code')"`,
+		`node -e "console.log('code')"`,
+		"cargo run",
+		"git status",
+		"xargs rm -f",
+		"tar -xf archive.tar",
+		"find . -delete",
+		"env sh -c true",
+		"yq -i '.enabled = true' config.yaml",
+		"gzip file.txt",
+		"gunzip file.txt.gz",
+	}
+
+	for _, command := range commands {
+		if got := svc.CheckCommand(command); got != PermissionAsk {
+			t.Errorf("CheckCommand(%q) = %v, want %v", command, got, PermissionAsk)
+		}
+	}
+}
+
+func TestReadOnlyCommandsRemainAutoAllowed(t *testing.T) {
+	svc := NewDefaultPermissionService(configs.PermissionsConfig{
+		DefaultLevel: "ask",
+	})
+	for _, command := range []string{"ls -la", "cat README.md", "rg TODO", "sha256sum go.mod", "uname -a"} {
+		if got := svc.CheckCommand(command); got != PermissionAllowAlways {
+			t.Errorf("CheckCommand(%q) = %v, want %v", command, got, PermissionAllowAlways)
+		}
+	}
+}
+
 func TestRequestRemember_EditScopesToSessionAndNotPersisted(t *testing.T) {
 	svc := NewDefaultPermissionService(configs.PermissionsConfig{
 		DefaultLevel: "ask",
