@@ -1,15 +1,22 @@
 package update
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
 
 // Install replaces the current binary with the downloaded one.
 // It backs up the existing binary to .bak and rolls back on failure.
-func Install(downloadedPath string) error {
+func Install(downloadedPath, expectedSHA256 string) error {
+	if err := verifySHA256(downloadedPath, expectedSHA256); err != nil {
+		return fmt.Errorf("verify downloaded binary: %w", err)
+	}
+
 	target := BinaryPath()
 	dir := filepath.Dir(target)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -40,6 +47,29 @@ func Install(downloadedPath string) error {
 	// Clean up backup.
 	os.Remove(backup)
 
+	return nil
+}
+
+func verifySHA256(path, expected string) error {
+	expected, err := validateSHA256(expected)
+	if err != nil {
+		return fmt.Errorf("invalid expected checksum: %w", err)
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open downloaded binary: %w", err)
+	}
+	defer file.Close()
+
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return fmt.Errorf("hash downloaded binary: %w", err)
+	}
+	actual := hex.EncodeToString(hash.Sum(nil))
+	if actual != expected {
+		return fmt.Errorf("checksum mismatch: got %s, want %s", actual, expected)
+	}
 	return nil
 }
 

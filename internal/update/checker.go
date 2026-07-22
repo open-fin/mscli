@@ -2,6 +2,7 @@ package update
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -30,13 +31,21 @@ func Check(ctx context.Context, currentVersion string) (*CheckResult, error) {
 
 	if compareSemver(currentVersion, manifest.Latest) < 0 {
 		result.UpdateAvailable = true
-		result.DownloadURL = buildDownloadURL(manifest.DownloadBase, manifest.Latest)
 	}
 
 	if manifest.MinAllowed != "" && compareSemver(currentVersion, manifest.MinAllowed) < 0 {
 		result.ForceUpdate = true
 		result.UpdateAvailable = true
+	}
+
+	if result.UpdateAvailable {
+		asset := binaryAssetName()
+		checksum, err := validateSHA256(manifest.Checksums[asset])
+		if err != nil {
+			return nil, fmt.Errorf("manifest checksum for %s: %w", asset, err)
+		}
 		result.DownloadURL = buildDownloadURL(manifest.DownloadBase, manifest.Latest)
+		result.SHA256 = checksum
 	}
 
 	return result, nil
@@ -235,9 +244,22 @@ func FetchReleaseNotes(ctx context.Context, version string) string {
 
 func buildDownloadURL(base, version string) string {
 	version = strings.TrimPrefix(version, "v")
+	return fmt.Sprintf("%s/v%s/%s", strings.TrimRight(base, "/"), version, binaryAssetName())
+}
+
+func binaryAssetName() string {
 	name := fmt.Sprintf("mscli-%s-%s", runtime.GOOS, runtime.GOARCH)
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
-	return fmt.Sprintf("%s/v%s/%s", strings.TrimRight(base, "/"), version, name)
+	return name
+}
+
+func validateSHA256(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	digest, err := hex.DecodeString(value)
+	if err != nil || len(digest) != 32 {
+		return "", fmt.Errorf("must be a 64-character hexadecimal SHA-256 digest")
+	}
+	return value, nil
 }

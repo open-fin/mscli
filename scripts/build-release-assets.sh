@@ -25,6 +25,7 @@ need_cmd() {
 }
 
 need_cmd go
+need_cmd sha256sum
 PLATFORMS=(
   "linux/amd64"
   "linux/arm64"
@@ -44,6 +45,7 @@ mkdir -p "${DIST_DIR}"
 
 cd "${REPO_ROOT}"
 
+ASSETS=()
 for platform in "${PLATFORMS[@]}"; do
   GOOS="${platform%/*}"
   GOARCH="${platform#*/}"
@@ -51,6 +53,7 @@ for platform in "${PLATFORMS[@]}"; do
   if [ "${GOOS}" = "windows" ]; then
     output="${output}.exe"
   fi
+  ASSETS+=("${output}")
   echo "  -> ${output}"
   GOOS="${GOOS}" GOARCH="${GOARCH}" go build \
     -ldflags "-X ${MODULE_PATH}/internal/version.Version=${VERSION}" \
@@ -58,13 +61,25 @@ for platform in "${PLATFORMS[@]}"; do
     ./cmd/mscli/
 done
 
-cat > "${DIST_DIR}/manifest.json" <<MANIFEST
 {
-  "latest": "${VERSION}",
-  "min_allowed": "",
-  "download_base": "https://gitcode.com/${GITCODE_OWNER}/${GITCODE_REPO}/releases/download"
-}
-MANIFEST
+  echo "{"
+  echo "  \"latest\": \"${VERSION}\","
+  echo "  \"min_allowed\": \"\","
+  echo "  \"download_base\": \"https://gitcode.com/${GITCODE_OWNER}/${GITCODE_REPO}/releases/download\","
+  echo "  \"checksums\": {"
+  last_index=$((${#ASSETS[@]} - 1))
+  for index in "${!ASSETS[@]}"; do
+    asset="${ASSETS[index]}"
+    checksum="$(sha256sum "${DIST_DIR}/${asset}" | cut -d ' ' -f 1)"
+    comma=","
+    if [ "${index}" -eq "${last_index}" ]; then
+      comma=""
+    fi
+    printf '    "%s": "%s"%s\n' "${asset}" "${checksum}" "${comma}"
+  done
+  echo "  }"
+  echo "}"
+} > "${DIST_DIR}/manifest.json"
 
 cp "${SCRIPT_DIR}/install.sh" "${DIST_DIR}/install.sh"
 chmod +x "${DIST_DIR}/install.sh"
