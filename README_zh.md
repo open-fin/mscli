@@ -15,13 +15,12 @@ MindSpore Model Agent 是一个面向 MindSpore 生态的、聚焦模型训练�
 
 亮点包括：
 
+- `[MCP]` 新增端到端 MCP 支持，包括项目审批、stdio / HTTP 传输、工具发现、生命周期控制与断线重连。
+- `[记忆]` 新增基于 `MEMORY.md` 和项目 `MSCLI.md` 的文件型自动记忆，以及 `/init` 和运行时推理强度调节。
+- `[CLI]` 新增无头 `exec` 工作流和会话恢复提示，支持脚本与 CI 使用场景。
+- `[工具]` 新增外部路径策略、能力元数据、标准化结果状态、生命周期事件与大结果 artifact 持久化。
+- `[skills]` 同步最新内置 MindSpore skills，并通过独立的 ACLNN 和自定义算子 builder 扩展算子开发能力。
 - `[安全]` 加固权限提示、shell 命令过滤、安全命令分类与更新二进制完整性校验。
-- `[skills]` 新增 Ascend A2 模型训练运行时失败报错、精度偏移和性能瓶颈的基础分析能力。
-- `[skills]` 新增 Hugging Face Transformers 模型迁移支持，并将 `mhc` / `attn-residual` 集成到 Qwen3 skill 模板中。
-- `[skills]` 集成 `openjiuwen claw`，并提供精度定位示例与部署指南。
-- `[cli]` 优化任务执行过程中的实时反馈，包括隐藏工具调用组装期间的状态展示。
-- `[cli]` 新增编辑类工具结果的 diff 视图，并优化工具调用转录内容的布局与可读性。
-- `[cli]` 修复流式输出截断场景下 shell 中断处理问题，统一 bug / issue 数据结构，并修复 GitCode 不兼容的安装示例。
 
 ## MindSpore CLI
 
