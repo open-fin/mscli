@@ -2,7 +2,7 @@ schema_version: "1.1.0"
 name: "accuracy-agent"
 display_name: "Accuracy Agent"
 description: "Diagnose accuracy regressions, numerical drift, wrong-result issues, and cross-platform mismatch after successful execution by analyzing the symptom, validating consistency across data, config, model, checkpoint, and runtime, preserving a reusable snapshot, and emitting an actionable report."
-version: "0.2.0"
+version: "0.3.0"
 
 entry:
   type: "manual"

@@ -5,8 +5,8 @@ import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from readiness_core import build_fix_actions, build_state, execute_fix_actions, write_readiness_env_file
-from readiness_report import build_report, write_report_artifacts
+from readiness_core import build_fix_actions, build_state, execute_fix_actions, load_latest_readiness_lock, seed_args_from_lock, write_readiness_env_file
+from readiness_report import build_legacy_report_from_assessment, build_report, write_report_artifacts
 
 
 VALUE_FLAGS = {
@@ -18,6 +18,7 @@ VALUE_FLAGS = {
     "--mode",
     "--entry-script",
     "--selected-python",
+    "--selected-env-root",
     "--config-path",
     "--model-path",
     "--model-hub-id",
@@ -27,8 +28,12 @@ VALUE_FLAGS = {
     "--checkpoint-path",
     "--task-smoke-cmd",
     "--timeout-seconds",
+    "--launcher-hint",
+    "--target-hint",
+    "--launch-command",
+    "--confirm",
 }
-BOOL_FLAGS = {"--check", "--fix", "--allow-network", "--verbose"}
+BOOL_FLAGS = {"--check", "--fix", "--allow-network", "--verbose", "--non-interactive", "--refresh-cache"}
 HELP_FLAGS = {"-h", "--help"}
 
 
@@ -100,10 +105,16 @@ def detect_removed_mode_usage(raw_args: List[str]) -> Optional[str]:
         if token == "--mode":
             if index + 1 < len(raw_args) and raw_args[index + 1] == "auto":
                 return "mode=auto was removed; use --mode fix for readiness remediation."
+            if index + 1 < len(raw_args) and raw_args[index + 1] == "certify":
+                return "mode certify was removed; use --mode check for guided readiness assessment."
             index += 2
             continue
-        if token.startswith("--mode=") and token.partition("=")[2] == "auto":
-            return "mode=auto was removed; use --mode fix for readiness remediation."
+        if token.startswith("--mode="):
+            mode_value = token.partition("=")[2]
+            if mode_value == "auto":
+                return "mode=auto was removed; use --mode fix for readiness remediation."
+            if mode_value == "certify":
+                return "mode certify was removed; use --mode check for guided readiness assessment."
         index += 1
     return None
 
@@ -124,7 +135,7 @@ def normalize_mode_args(parser: argparse.ArgumentParser, args: argparse.Namespac
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run the streamlined readiness-agent check or fix workflow", allow_abbrev=False)
+    parser = argparse.ArgumentParser(description="Run the streamlined readiness-agent workflow", allow_abbrev=False)
     parser.add_argument("--working-dir", help="workspace root (defaults to the current shell path)")
     parser.add_argument("--output-dir", help="output directory for readiness artifacts (defaults to <working_dir>/readiness-output)")
     parser.add_argument("--target", default="auto", help="training, inference, or auto")
@@ -144,27 +155,27 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset-split", help="optional dataset split")
     parser.add_argument("--checkpoint-path", help="explicit checkpoint path")
     parser.add_argument("--task-smoke-cmd", help="optional explicit smoke command")
+    parser.add_argument("--launcher-hint", default="auto", help="optional launcher preference for assessment")
+    parser.add_argument("--target-hint", default="auto", help="optional target preference for assessment")
+    parser.add_argument("--launch-command", help="explicit launch command template for assessment")
+    parser.add_argument("--selected-env-root", help="explicit environment root for assessment")
+    parser.add_argument("--confirm", action="append", default=[], help="confirmation binding in field=value form")
+    parser.add_argument("--non-interactive", action="store_true", help="do not block for confirmation in check mode")
+    parser.add_argument("--refresh-cache", action="store_true", help="refresh the latest readiness cache")
     parser.add_argument("--allow-network", action="store_true", help="allow network-dependent remediation")
     parser.add_argument("--timeout-seconds", type=int, default=10, help="timeout for explicit smoke execution")
     return parser
 
 
-def main() -> int:
-    parser = build_parser()
-    raw_cli_args = sys.argv[1:]
-    removed_mode_error = detect_removed_mode_usage(raw_cli_args)
-    if removed_mode_error:
-        print(json.dumps({"error": removed_mode_error}, indent=2), file=sys.stderr)
-        return 2
-
-    sanitized_cli_args, ignored_cli_args = sanitize_cli_args(raw_cli_args)
-    args = parser.parse_args(sanitized_cli_args)
-    args.mode = normalize_mode_args(parser, args)
-
+def run_legacy_readiness_pipeline(args: argparse.Namespace, raw_cli_args: List[str], ignored_cli_args: List[dict]) -> int:
     working_dir = Path(args.working_dir or ".").resolve()
     output_dir = Path(args.output_dir).resolve() if args.output_dir else working_dir / "readiness-output"
     meta_dir = output_dir / "meta"
     meta_dir.mkdir(parents=True, exist_ok=True)
+
+    lock, lock_warning = load_latest_readiness_lock(working_dir, output_dir)
+    if lock:
+        seed_args_from_lock(args, lock)
 
     inputs_snapshot = {
         "working_dir": str(working_dir),
@@ -209,6 +220,7 @@ def main() -> int:
         "failed_actions": fix_applied.get("failed_actions", []),
         "needs_revalidation": fix_applied.get("needs_revalidation", []),
         "readiness_env_path": str(readiness_env_path),
+        "lock_warning": lock_warning,
     }
     write_json(meta_dir / "env.json", env_snapshot)
 
@@ -220,6 +232,12 @@ def main() -> int:
         fix_applied,
     )
     write_report_artifacts(output_dir, verdict)
+
+    if fix_applied.get("executed_actions"):
+        from assessment.assessment_core import run_assessment_pipeline
+
+        args.non_interactive = True
+        run_assessment_pipeline(args)
 
     print(
         json.dumps(
@@ -233,6 +251,51 @@ def main() -> int:
         )
     )
     return 0
+
+
+def main() -> int:
+    parser = build_parser()
+    raw_cli_args = sys.argv[1:]
+    removed_mode_error = detect_removed_mode_usage(raw_cli_args)
+    if removed_mode_error:
+        print(json.dumps({"error": removed_mode_error}, indent=2), file=sys.stderr)
+        return 2
+
+    sanitized_cli_args, ignored_cli_args = sanitize_cli_args(raw_cli_args)
+    args = parser.parse_args(sanitized_cli_args)
+    args.mode = normalize_mode_args(parser, args)
+
+    if args.mode == "check":
+        from assessment.assessment_core import run_assessment_pipeline
+
+        assessment = run_assessment_pipeline(args)
+        if assessment.get("status") == "NEEDS_CONFIRMATION":
+            print(json.dumps(assessment, indent=2))
+            return 20
+
+        # Produce legacy compatibility artifacts from assessment result
+        working_dir = Path(args.working_dir or ".").resolve()
+        output_dir = Path(args.output_dir).resolve() if args.output_dir else working_dir / "readiness-output"
+        legacy_report = build_legacy_report_from_assessment(assessment)
+        write_report_artifacts(output_dir, legacy_report)
+
+        print(
+            json.dumps(
+                {
+                    "status": legacy_report["status"],
+                    "target": legacy_report["target"],
+                    "can_run": legacy_report["can_run"],
+                    "next_action": legacy_report["next_action"],
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.mode == "fix":
+        return run_legacy_readiness_pipeline(args, raw_cli_args, ignored_cli_args)
+
+    raise ValueError(f"Unsupported readiness mode: {args.mode}")
 
 
 if __name__ == "__main__":

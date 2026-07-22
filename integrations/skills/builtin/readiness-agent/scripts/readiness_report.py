@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import List, Optional, Set, Tuple
 from uuid import uuid4
 
+from readiness_core import make_check
+
 
 READY_LEVELS = {"runtime_smoke", "task_smoke"}
 
@@ -246,7 +248,7 @@ def build_shared_envelope(verdict: dict, output_json: Path, output_md: Path, out
         "duration_sec": 0,
         "steps": [
             {
-                "name": "readiness-certification",
+                "name": "readiness-assessment",
                 "status": shared_status,
                 "message": verdict.get("summary", ""),
             }
@@ -325,3 +327,229 @@ def write_report_artifacts(output_dir: Path, verdict: dict) -> Tuple[dict, Path]
     envelope = build_shared_envelope(verdict, output_json, output_md, verdict_json)
     output_json.write_text(json.dumps(envelope, indent=2), encoding="utf-8")
     return envelope, verdict_json
+
+
+def build_legacy_report_from_assessment(assessment: dict) -> dict:
+    status = str(assessment.get("status") or "BLOCKED")
+    target_field = assessment.get("target") or {}
+    target_type = target_field.get("value") if isinstance(target_field, dict) else None
+    target_type = target_type or "inference"
+
+    confirmed_fields = assessment.get("confirmed_fields") or {}
+    runtime = assessment.get("runtime") or {}
+    python_env = runtime.get("python") or {}
+    framework = runtime.get("framework") or {}
+    assets = assessment.get("assets") or {}
+    checks = assessment.get("checks") or []
+    task_smoke = assessment.get("task_smoke") or {}
+
+    # Build legacy checks from assessment checks
+    legacy_checks: List[dict] = []
+    has_runtime_python = False
+    has_framework_import = False
+    has_task_smoke_pass = False
+    has_task_smoke_fail = False
+    has_selected_python_fail = False
+    has_config_fail = False
+
+    for check in checks:
+        name = str(check.get("name") or "")
+        cstatus = str(check.get("status") or "").lower()
+        if name == "runtime_python" and cstatus == "pass":
+            has_runtime_python = True
+        if name.startswith("framework_import:") and cstatus == "pass":
+            has_framework_import = True
+        if name == "task_smoke_cmd":
+            if cstatus == "pass":
+                has_task_smoke_pass = True
+            elif cstatus in {"fail", "failed"}:
+                has_task_smoke_fail = True
+        if name == "selected_python" and cstatus in {"fail", "failed"}:
+            has_selected_python_fail = True
+        if name == "config_readability" and cstatus in {"fail", "failed"}:
+            has_config_fail = True
+
+        # Map individual assessment checks to legacy checks
+        if name.startswith("framework_import:"):
+            legacy_status = "ok" if cstatus == "pass" else "block" if cstatus in {"fail", "failed", "timeout"} else "warn"
+            legacy_checks.append(
+                make_check("framework-importability", legacy_status, f"Framework import {name.split(':', 1)[1]} {'ok' if legacy_status == 'ok' else 'failed'}.")
+            )
+        elif name == "selected_python":
+            if cstatus in {"fail", "failed"}:
+                legacy_checks.append(
+                    make_check(
+                        "python-selected-env",
+                        "block",
+                        "No usable workspace-local Python environment is selected.",
+                        category_hint="env",
+                        remediable=True,
+                        remediation_owner="readiness-agent",
+                        revalidation_scope=["python-environment", "framework"],
+                    )
+                )
+        elif name == "config_readability":
+            legacy_status = "ok" if cstatus == "pass" else "block"
+            legacy_checks.append(
+                make_check("config-readability", legacy_status, f"Config readability {legacy_status}.")
+            )
+
+    # Synthesize runtime-smoke check
+    if has_runtime_python and has_framework_import:
+        legacy_checks.append(make_check("runtime-smoke", "ok", "Runtime smoke passed."))
+    elif has_selected_python_fail:
+        legacy_checks.append(
+            make_check(
+                "runtime-smoke",
+                "block",
+                "Runtime smoke could not run because entry script parsing prerequisites are unresolved.",
+            )
+        )
+    else:
+        legacy_checks.append(make_check("runtime-smoke", "warn", "Runtime smoke did not gather enough evidence to assess this workspace yet."))
+
+    # Synthesize task-smoke-executed check
+    if has_task_smoke_pass:
+        legacy_checks.append(make_check("task-smoke-executed", "ok", "Explicit task smoke command completed successfully."))
+    elif has_task_smoke_fail:
+        legacy_checks.append(make_check("task-smoke-executed", "block", "Explicit task smoke command failed."))
+    else:
+        if task_smoke.get("command"):
+            legacy_checks.append(make_check("task-smoke-executed", "skipped", "Task smoke was skipped or not confirmed."))
+        else:
+            legacy_checks.append(make_check("task-smoke-executed", "skipped", "No explicit task smoke command was requested."))
+
+    # Derive evidence_level
+    evidence_level = "structural"
+    if has_task_smoke_pass:
+        evidence_level = "task_smoke"
+    elif has_runtime_python and has_framework_import:
+        evidence_level = "runtime_smoke"
+    elif has_framework_import:
+        evidence_level = "import"
+
+    # Derive can_run
+    revalidated = True
+    can_run = status == "READY" or (status == "WARN" and evidence_level in READY_LEVELS and revalidated)
+
+    # Build blockers/warnings from checks and confirmed_fields
+    blockers_detailed: List[dict] = []
+    warnings_detailed: List[dict] = []
+    for check in legacy_checks:
+        cstatus = str(check.get("status") or "").lower()
+        if cstatus == "block":
+            blockers_detailed.append(
+                {
+                    "id": check.get("id"),
+                    "summary": check.get("summary"),
+                    "evidence": check.get("evidence") or [],
+                    "category": "env" if check.get("id") == "python-selected-env" else "framework",
+                    "severity": "high",
+                    "remediable": check.get("remediable", True),
+                    "remediation_owner": check.get("remediation_owner", "readiness-agent"),
+                    "revalidation_scope": check.get("revalidation_scope") or [],
+                }
+            )
+        elif cstatus == "warn":
+            warnings_detailed.append(
+                {
+                    "id": check.get("id"),
+                    "summary": check.get("summary"),
+                    "evidence": check.get("evidence") or [],
+                    "category": "framework",
+                    "severity": "medium",
+                    "remediable": False,
+                    "remediation_owner": "readiness-agent",
+                    "revalidation_scope": [],
+                }
+            )
+
+    # Add warnings for skipped/unknown confirmations
+    for field, value in confirmed_fields.items():
+        if isinstance(value, dict) and value.get("source") in {"skipped", "unknown"}:
+            warnings_detailed.append(
+                {
+                    "id": f"confirmation-{field}",
+                    "summary": f"{field} was not confirmed and may be ambiguous.",
+                    "evidence": [],
+                    "category": "workspace",
+                    "severity": "medium",
+                    "remediable": False,
+                    "remediation_owner": "workspace",
+                    "revalidation_scope": [],
+                }
+            )
+
+    blockers = [b["summary"] for b in blockers_detailed]
+    warnings = [w["summary"] for w in warnings_detailed]
+
+    # Determine summary and next_action
+    if status == "READY":
+        summary = f"Current environment is ready for {target_type}."
+        next_action = "Readiness looks good. Do you want me to run the real model script now?"
+    elif status == "WARN":
+        if can_run:
+            summary = f"{target_type.capitalize()} can probably run, but warnings still reduce readiness confidence."
+            next_action = "Readiness finished with warnings. Do you want me to run the real model script now?"
+        else:
+            summary = f"{target_type.capitalize()} appears plausible, but runtime evidence is not strong enough for READY."
+            next_action = "Readiness is not fully certified yet. Do you want me to try running the real model script now, or should I stop at the report?"
+    else:
+        summary = f"{target_type.capitalize()} is blocked because required readiness prerequisites remain unresolved."
+        next_action = "Resolve blockers and rerun readiness."
+
+    # Build dependency_closure
+    dependency_closure = {
+        "working_dir": None,
+        "target_type": target_type,
+        "layers": {
+            "python_environment": {
+                "selection_status": "selected" if python_env.get("executable") else "unselected",
+                "selected_env_root": None,
+                "probe_python_path": python_env.get("executable"),
+                "python_version": python_env.get("version"),
+            },
+            "framework": {
+                "framework_path": framework.get("name"),
+                "framework_smoke": {"status": "passed" if has_framework_import else "failed"},
+            },
+            "workspace_assets": {
+                "entry_script": {"exists": (assets.get("entry_script") or {}).get("exists", False)},
+                "model_path": {"exists": (assets.get("model") or {}).get("exists", False)},
+                "dataset_path": {"exists": (assets.get("dataset") or {}).get("exists", False)},
+            },
+        },
+    }
+
+    # Build selected_environment_guidance
+    selected_python = python_env.get("executable")
+    guidance: dict = {"selected_python": selected_python, "system_python_allowed": False, "readiness_env_path": None}
+    if selected_python:
+        guidance["run_command"] = f"{selected_python} <script.py>"
+    else:
+        guidance["message"] = "Workspace-local Python is unresolved. Do not fall back to system python."
+
+    return {
+        "schema_version": "readiness-agent/0.1",
+        "skill": "readiness-agent",
+        "status": status,
+        "can_run": can_run,
+        "target": target_type,
+        "summary": summary,
+        "blockers": blockers,
+        "warnings": warnings,
+        "next_action": next_action,
+        "execution_target": {"target_type": target_type, "working_dir": dependency_closure["working_dir"]},
+        "evidence_level": evidence_level,
+        "task_smoke_state": "passed" if has_task_smoke_pass else "failed" if has_task_smoke_fail else "not_requested" if not task_smoke.get("command") else "skipped",
+        "dependency_closure": dependency_closure,
+        "checks": legacy_checks,
+        "blockers_detailed": blockers_detailed,
+        "warnings_detailed": warnings_detailed,
+        "fix_applied": {"execute": False, "planned_actions": [], "results": [], "executed_actions": [], "failed_actions": [], "needs_revalidation": []},
+        "revalidated": revalidated,
+        "revalidation_required_scopes": [],
+        "revalidation_covered_scopes": [],
+        "selected_environment_guidance": guidance,
+        "remote_asset_guidance": None,
+    }

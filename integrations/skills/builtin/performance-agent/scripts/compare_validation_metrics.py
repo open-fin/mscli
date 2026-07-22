@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from perf_common import parse_number, read_json, write_json
@@ -101,7 +102,8 @@ def main() -> int:
     before = normalize_metrics(read_json(Path(args.before_json)))
     after = normalize_metrics(read_json(Path(args.after_json)))
     if not before or not after:
-        raise SystemExit("Both before and after metric files must contain numeric metrics.")
+        print("Both before and after metric files must contain numeric metrics.", file=sys.stderr)
+        raise SystemExit(1)
 
     report = compare(before, after)
     report["before_ref"] = str(Path(args.before_json).resolve())

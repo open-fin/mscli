@@ -1,0 +1,101 @@
+# $operator_name 验收测试报告
+
+- MindSpore 接口：`$ms_api`
+- PTA 基线接口：`$pta_api`
+- 最终结论：`$final_conclusion`
+
+## 审核摘要
+
+| 项目 | 结果 |
+| --- | --- |
+$audit_summary_rows
+
+$audit_interpretation
+
+## AI 报告审视
+
+| 项目 | 证据 |
+| --- | --- |
+$ai_review_rows
+
+## 流程门禁
+
+| 项目 | 证据 |
+| --- | --- |
+$acceptance_artifact_rows
+
+## 阻塞缺口
+
+| 范围 | 状态 | 原因 |
+| --- | --- | --- |
+$blocking_gap_rows
+
+## 非阻塞备注
+
+| 范围 | 状态 | 原因 |
+| --- | --- | --- |
+$advisory_rows
+
+## Agent 待补证据
+
+| 章节 | 条目 | 状态 | 原因 | agent_evidence key |
+| --- | --- | --- | --- | --- |
+$agent_evidence_request_rows
+
+## 人工确认项
+
+| 章节 | 条目 | 状态 | 原因 |
+| --- | --- | --- | --- |
+$manual_review_rows
+
+## Dtype 支持矩阵
+
+| 项目 | 证据 |
+| --- | --- |
+$dtype_support_rows
+
+## Checklist 明细
+
+$checklist_rows
+
+## 泛化覆盖
+
+| 维度 | 证据 |
+| --- | --- |
+$coverage_rows
+
+Shape 覆盖：
+
+$shape_coverage
+
+## Shape 用例设计
+
+| 项目 | 内容 |
+| --- | --- |
+$shape_design_rows
+
+## 功能用例明细
+
+$case_detail_rows
+
+## 性能用例明细
+
+$perf_detail_rows
+
+## 显存对比明细
+
+$memory_detail_rows
+
+## Kernel 与显存证据
+
+| 用例 | MS 端到端耗时(us) | PTA 端到端耗时(us) | MS Kernel耗时(us) | PTA Kernel耗时(us) | MS 显存(MB) | PTA 显存(MB) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+$performance_rows
+
+Kernel、性能和显存证据按 profiler 用例记录在上方表格。缺失的 profiler 证据会列入 skip/block/gap 明细。
+
+## Skip/Block/Gap 明细
+
+| 范围 | 状态 | 原因 |
+| --- | --- | --- |
+$gap_rows

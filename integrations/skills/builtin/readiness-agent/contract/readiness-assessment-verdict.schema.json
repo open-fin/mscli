@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mindspore-skills.dev/schema/readiness-assessment-verdict-1.0.0.json",
+  "title": "Readiness Agent Certify Verdict",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "producer",
+    "mode",
+    "engine",
+    "status"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "readiness.assessment.v1"
+    },
+    "producer": {
+      "type": "string",
+      "const": "readiness-agent"
+    },
+    "mode": {
+      "type": "string",
+      "const": "check"
+    },
+    "engine": {
+      "type": "string",
+      "const": "assessment"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["NEEDS_CONFIRMATION", "READY", "WARN", "BLOCKED"]
+    },
+    "phase": {
+      "type": "string",
+      "enum": ["awaiting_confirmation", "validated"]
+    },
+    "current_confirmation": {
+      "type": ["object", "null"]
+    },
+    "portable_question": {
+      "$ref": "portable-question.schema.json"
+    },
+    "confirmed_fields": {
+      "type": "object"
+    },
+    "target": {
+      "type": ["object", "null"]
+    },
+    "launcher": {
+      "type": ["object", "null"]
+    },
+    "runtime": {
+      "type": ["object", "null"]
+    },
+    "assets": {
+      "type": ["object", "null"]
+    }
+  }
+}

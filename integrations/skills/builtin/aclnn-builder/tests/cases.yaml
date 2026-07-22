@@ -1,0 +1,268 @@
+schema_version: "1.0.0"
+defaults:
+  artifact_globs:
+    - "*_Feature.md"
+    - "*_pta_analysis.md"
+    - "*_callchain_analysis.md"
+cases:
+  - id: "adaptivemaxpool3d"
+    enabled: true
+    description: | 
+      mint.nn.functional.adaptive_max_pool3d, old python primitive exists.
+      op_def (also for grad) to be added with customized kernel.
+
+      Tag: no yaml, customized kernel, bprop
+
+      Difficulty: medium
+    timeout_sec: 1800
+    prompt: |
+      Use {{skill:aclnn_builder}} to adapt `mint.nn.functional.adaptive_max_pool3d` for aclnn kernel end to end. Just code generation, don't compile.
+
+      Operate only on the isolated MindSpore checkout prepared for this task:
+      - target repo: {{repo:mindspore}}
+      - op-plugin repo: {{op_plugin_dir}}
+
+      Put progress-tracing and validation markdown artifacts under {{artifact_dir}} when possible.
+    repos:
+      - name: "mindspore"
+        ref: "HEAD"
+        isolation: "git-worktree"
+        expected_changes:
+          added: 
+            - "mindspore/ops/op_def/yaml/adaptive_max_pool3d_ext_op.yaml"
+            - "mindspore/ops/op_def/yaml/adaptive_max_pool3d_grad_ext_op.yaml"
+            - "mindspore/ops/infer/ops_func_impl/adaptive_max_pool3d_ext.cc"
+            - "mindspore/ops/infer/ops_func_impl/adaptive_max_pool3d_grad_ext.cc"
+            - "tests/ut/cpp/ops/test_ops_adaptive_max_pool3d_ext.cc"
+          modified:
+            - "mindspore/python/mindspore/mint/nn/functional.py"
+            - "docs/api/api_python/mindspore.mint.rst"
+            - "docs/api/api_python_en/mindspore.mint.rst"
+          deleted: []
+  - id: "acos_"
+    enabled: true
+    description: | 
+      mint.nn.functional.acos_, op_def to be added with auto-generated kernel.
+
+      Tag: inplace
+
+      Difficulty: easy
+    timeout_sec: 1800
+    prompt: |
+      Use {{skill:aclnn_builder}} to adapt `mint.acos_` for aclnn kernel end to end. Just code generation, don't compile.
+
+      Operate only on the isolated MindSpore checkout prepared for this task:
+      - target repo: {{repo:mindspore}}
+      - op-plugin repo: {{op_plugin_dir}}
+
+      Put progress-tracing and validation markdown artifacts under {{artifact_dir}} when possible.
+    repos:
+      - name: "mindspore"
+        ref: "HEAD"
+        isolation: "git-worktree"
+        expected_changes:
+          added: 
+            - "mindspore/ops/op_def/yaml/inplace_acos_op.yaml"
+            - "mindspore/ops/infer/ops_func_impl/inplace_acos.cc"
+            - "tests/ut/cpp/ops/test_ops_inplace_acos.cc"
+            - "mindspore/ops/op_def/yaml/doc/inplace_acos_doc.yaml"
+          modified:
+            - "mindspore/python/mindspore/mint/__init__.py"
+            - "docs/api/api_python/mindspore.mint.rst"
+            - "docs/api/api_python_en/mindspore.mint.rst"
+          deleted: []
+  - id: "_foreach_abs"
+    enabled: true
+    description: | 
+      mint._foreach_abs, op_def to be added with auto-generated kernel.
+
+      Difficulty: easy
+    timeout_sec: 1800
+    prompt: |
+      Use {{skill:aclnn_builder}} to adapt `mint._foreach_abs` for aclnn kernel end to end. Just code generation, don't compile.
+
+      Operate only on the isolated MindSpore checkout prepared for this task:
+      - target repo: {{repo:mindspore}}
+      - op-plugin repo: {{op_plugin_dir}}
+
+      Put progress-tracing and validation markdown artifacts under {{artifact_dir}} when possible.
+    repos:
+      - name: "mindspore"
+        ref: "HEAD"
+        isolation: "git-worktree"
+        expected_changes:
+          added: 
+            - "mindspore/ops/op_def/yaml/foreach_abs.yaml"
+            - "mindspore/ops/infer/ops_func_impl/foreach_abs.cc"
+            - "tests/ut/cpp/ops/test_ops_foreach_abs.cc"
+            - "mindspore/ops/op_def/yaml/doc/foreach_abs.yaml"
+          modified:
+            - "mindspore/python/mindspore/mint/nn/functional.py"
+          deleted: []
+  - id: "celu"
+    enabled: true
+    description: "celu, no mint, have primitive; auto dispatch to be added."
+    timeout_sec: 1800
+    prompt: |
+      Use {{skill:aclnn_builder}} to adapt `mindspore.mint.nn.functional.celu` end to end. Just code generation, don't compile.
+
+      Operate only on the isolated MindSpore checkout prepared for this task:
+      - target repo: {{repo:mindspore}}
+      - op-plugin repo: {{op_plugin_dir}}
+
+      Put progress-tracing and validation markdown artifacts under {{artifact_dir}} when possible.
+    repos:
+      - name: "mindspore"
+        ref: "HEAD"
+        isolation: "git-worktree"
+        expected_changes:
+          added:
+            - "docs/api/api_python/mint/mindspore.mint.nn.functional.celu.rst"
+          modified:
+            - "mindspore/ops/op_def/yaml/celu_op.yaml"
+            - "mindspore/python/mindspore/mint/nn/functional.py"
+            - "docs/api/api_python/mindspore.mint.rst"
+            - "docs/api/api_python_en/mindspore.mint.rst"
+          deleted: []
+  - id: "range"
+    enabled: true
+    description: "range, have primitive that doesn't match aclnn; _ext op to be added with customized kernel"
+    timeout_sec: 1800
+    prompt: |
+      Use {{skill:aclnn_builder}} to adapt `mindspore.mint.range` end to end. Just code generation, don't compile.
+
+      Operate only on the isolated MindSpore checkout prepared for this task:
+      - target repo: {{repo:mindspore}}
+      - op-plugin repo: {{op_plugin_dir}}
+
+      Put progress-tracing and validation markdown artifacts under {{artifact_dir}} when possible.
+    repos:
+      - name: "mindspore"
+        ref: "HEAD"
+        isolation: "git-worktree"
+        expected_changes:
+          added: 
+            - "mindspore/ops/op_def/yaml/range_ext_op.yaml"
+            - "docs/api/api_python/mint/mindspore.mint.func_range.rst"
+            - "mindspore/ops/kernel/ascend/aclnn/kernel_mod_impl/customize/range_ext_aclnn_kernel.cc"
+            - "mindspore/ops/kernel/ascend/aclnn/kernel_mod_impl/customize/range_ext_aclnn_kernel.h"
+            - "mindspore/ops/kernel/ascend/aclnn/pyboost_impl/customize/range_ext.cc"
+            - "mindspore/ops/kernel/ascend/aclnn/pyboost_impl/customize/range_ext.h"
+            - "mindspore/ops/op_def/yaml/doc/range_ext_doc.yaml"
+            - "tests/ut/cpp/ops/test_ops_range_ext.cc"
+          modified:
+            - "mindspore/python/mindspore/mint/__init__.py"
+            - "docs/api/api_python/mindspore.mint.rst"
+            - "docs/api/api_python_en/mindspore.mint.rst"
+          deleted: []
+  - id: "tensor_aminmax"
+    enabled: true
+    description: | 
+      Tensor.aminmax, existing, no primitive, calling min/max/argmin/argmax for now; primitive to be added with customized kernel.
+      Customize kernel should call argmin/argmax in cases.
+      Bprop logic needs to be added. Old tensor method in tensor.py needs to be removed.
+      Difficult case.
+    timeout_sec: 1800
+    prompt: |
+      Use {{skill:aclnn_builder}} to adapt `Tensor.aminmax` for aclnn kernel end to end. Just code generation, don't compile.
+
+      Operate only on the isolated MindSpore checkout prepared for this task:
+      - target repo: {{repo:mindspore}}
+      - op-plugin repo: {{op_plugin_dir}}
+
+      Put progress-tracing and validation markdown artifacts under {{artifact_dir}} when possible.
+    repos:
+      - name: "mindspore"
+        ref: "HEAD"
+        isolation: "git-worktree"
+        expected_changes:
+          added: 
+            - "mindspore/ops/op_def/yaml/aminmax_op.yaml"
+            - "mindspore/ops/api_def/aminmax.yaml"
+            - "mindspore/ops/op_def/yaml/doc/aminmax_doc.yaml"
+            - "mindspore/ops/api_def/method_doc/aminmax_doc.yaml"
+            - "mindspore/ops/kernel/ascend/aclnn/kernel_mod_impl/customize/aminmax_aclnn_kernel.cc"
+            - "mindspore/ops/kernel/ascend/aclnn/kernel_mod_impl/customize/aminmax_aclnn_kernel.h"
+            - "mindspore/ops/kernel/ascend/aclnn/pyboost_impl/customize/aminmax.cc"
+            - "mindspore/ops/kernel/ascend/aclnn/pyboost_impl/customize/aminmax.h"
+            - "tests/ut/cpp/ops/test_ops_aminmax.cc"
+          modified:
+            - "mindspore/ccsrc/frontend/expander/grad/grad_math_ops.cc"
+            - "mindspore/python/mindspore/common/tensor.py"
+          deleted: []
+  - id: "addr"
+    enabled: true
+    description: | 
+      mint.addr, no primitive. ops.addr(which Tensor.addr now calls) use composite python function;
+      primitive to be added with auto-generated kernel.
+      Bprop logic needs to be added. 
+
+      Tag: no primitive
+
+      Difficulty: medium
+    timeout_sec: 1800
+    prompt: |
+      Use {{skill:aclnn_builder}} to adapt `mint.addr` and `Tensor.addr` for aclnn kernel end to end. Just code generation, don't compile.
+
+      Operate only on the isolated MindSpore checkout prepared for this task:
+      - target repo: {{repo:mindspore}}
+      - op-plugin repo: {{op_plugin_dir}}
+
+      Put progress-tracing and validation markdown artifacts under {{artifact_dir}} when possible.
+    repos:
+      - name: "mindspore"
+        ref: "HEAD"
+        isolation: "git-worktree"
+        expected_changes:
+          added: 
+            - "mindspore/ops/op_def/yaml/addr_op.yaml"
+            - "mindspore/ops/api_def/addr.yaml"
+            - "mindspore/ops/op_def/yaml/doc/addr_doc.yaml"
+            - "mindspore/ops/api_def/method_doc/addr_doc.yaml"
+            - "tests/ut/cpp/ops/test_ops_addr.cc"
+          modified:
+            - "mindspore/ccsrc/frontend/expander/grad/grad_math_ops.cc"
+            - "mindspore/python/mindspore/common/tensor.py"
+            - "docs/api/api_python/mindspore.mint.rst"
+            - "docs/api/api_python_en/mindspore.mint.rst"
+            - "mindspore/python/mindspore/mint/__init__.py"
+          deleted: []
+  - id: "nanmedian"
+    enabled: true
+    description: | 
+      mint.nanmedian, no primitive. ops.nanmedian(which Tensor.nanmedian calls) use ops.median(ignore_nan=True);
+      api_def required, two primitive nanmedian and nanmedian_dim to be added with auto-generated kernel.
+      No bprop.
+
+      Tag: overload
+
+      Difficulty: medium
+    timeout_sec: 1800
+    prompt: |
+      Use {{skill:aclnn_builder}} to adapt `mint.nanmedian` and `Tensor.nanmedian` for aclnn kernel end to end. Just code generation, don't compile.
+
+      Operate only on the isolated MindSpore checkout prepared for this task:
+      - target repo: {{repo:mindspore}}
+      - op-plugin repo: {{op_plugin_dir}}
+
+      Put progress-tracing and validation markdown artifacts under {{artifact_dir}} when possible.
+    repos:
+      - name: "mindspore"
+        ref: "HEAD"
+        isolation: "git-worktree"
+        expected_changes:
+          added: 
+            - "mindspore/ops/op_def/yaml/nanmedian_op.yaml"
+            - "mindspore/ops/op_def/yaml/nanmedian_dim_op.yaml"
+            - "mindspore/ops/api_def/nanmedian.yaml"
+            - "mindspore/ops/api_def/method_doc/nanmedian_doc.yaml"
+            - "mindspore/ops/api_def/function_doc/nanmedian_doc.yaml"
+            - "tests/ut/cpp/ops/test_ops_nanmedian.cc"
+            - "tests/ut/cpp/ops/test_ops_nanmedian_dim.cc"
+          modified:
+            - "mindspore/python/mindspore/common/tensor.py"
+            - "docs/api/api_python/mindspore.mint.rst"
+            - "docs/api/api_python_en/mindspore.mint.rst"
+            - "mindspore/python/mindspore/mint/__init__.py"
+            - "mindspore/ccsrc/frontend/expander/grad/grad_math_ops.cc"
+          deleted: []

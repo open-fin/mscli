@@ -1,0 +1,606 @@
+"""Generated profiler acceptance cases for $operator_name."""
+from __future__ import annotations
+
+import json
+import shutil
+import time
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from acceptance_profiler import (
+    compare_kernel_summaries,
+    compare_memory,
+    extract_kernel_records,
+    ms_lightweight_sync,
+    ms_peak_memory_mb,
+    ms_reset_peak_memory,
+    profiler_environment_ready,
+    summarize_kernel_records,
+    timed_call,
+    timed_call_loop,
+    torch_lightweight_sync,
+    torch_peak_memory_mb,
+    torch_reset_peak_memory,
+    write_profile_summary,
+)
+
+
+META = json.loads(r'''$meta_json''')
+CASES = json.loads(r'''$cases_json''')
+RESULT_DIR = Path(__file__).resolve().parents[1] / "results" / META["operator_name"]
+DTYPE_PROBE_CANDIDATES = ["float16", "float32", "bfloat16", "float64", "int32", "int64", "bool"]
+
+
+def _ms_dtype_for(ms, dtype_name):
+    if dtype_name == "bfloat16":
+        return getattr(ms, "bfloat16", ms.float32)
+    return {
+        "float16": ms.float16,
+        "float32": ms.float32,
+        "float64": ms.float64,
+        "int32": ms.int32,
+        "int64": ms.int64,
+        "bool": ms.bool_,
+    }.get(dtype_name, ms.float32)
+
+
+def _ms_dtype_or_none(ms, dtype_name):
+    if dtype_name == "bfloat16":
+        return getattr(ms, "bfloat16", None)
+    return {
+        "float16": ms.float16,
+        "float32": ms.float32,
+        "float64": ms.float64,
+        "int32": ms.int32,
+        "int64": ms.int64,
+        "bool": ms.bool_,
+    }.get(dtype_name)
+
+
+def _torch_dtype_or_none(torch, dtype_name):
+    return {
+        "float16": torch.float16,
+        "float32": torch.float32,
+        "bfloat16": torch.bfloat16,
+        "float64": torch.float64,
+        "int32": torch.int32,
+        "int64": torch.int64,
+        "bool": torch.bool,
+    }.get(dtype_name)
+
+
+def _ms_tensor_for_dtype(ms, array, dtype_name):
+    dtype = _ms_dtype_or_none(ms, dtype_name)
+    if dtype is None:
+        raise RuntimeError(f"MindSpore dtype is unavailable: {dtype_name}")
+    return ms.Tensor(array, dtype=dtype)
+
+
+def _torch_tensor_for_dtype(torch, array, dtype_name):
+    dtype = _torch_dtype_or_none(torch, dtype_name)
+    if dtype is None:
+        raise RuntimeError(f"PTA dtype is unavailable: {dtype_name}")
+    return torch.from_numpy(array).to(dtype).to("npu")
+
+
+def _np_dtype(dtype):
+    return {
+        "float16": np.float16,
+        "float32": np.float32,
+        "bfloat16": np.float32,
+        "float64": np.float64,
+        "int32": np.int32,
+        "int64": np.int64,
+        "bool": np.bool_,
+    }.get(dtype, np.float32)
+
+
+def _array_for_case(case, input_name):
+    tensor_dtypes = case.get("tensor_dtypes", {})
+    dtype_name = (
+        tensor_dtypes.get(input_name, case.get("dtype", "float32"))
+        if input_name else case.get("dtype", "float32")
+    )
+    dtype = _np_dtype(dtype_name)
+    input_shapes = case.get("input_shapes", {})
+    shape = tuple(input_shapes.get(input_name, case.get("shape", [4])))
+    values = case.get("values")
+    if values is not None:
+        normalized = [
+            float("inf") if value == "inf"
+            else float("-inf") if value == "-inf"
+            else float("nan") if value == "nan"
+            else value
+            for value in values
+        ]
+        base = np.asarray(normalized, dtype=dtype)
+        if shape and base.size != int(np.prod(shape)):
+            base = np.resize(base, shape)
+        return base.reshape(shape)
+    size = int(np.prod(shape)) if shape else 1
+    if np.issubdtype(dtype, np.floating):
+        data = np.linspace(-0.5, 0.5, num=size, dtype=np.float32).astype(dtype)
+    elif np.issubdtype(dtype, np.bool_):
+        data = (np.arange(size) % 2).astype(dtype)
+    else:
+        data = np.arange(size, dtype=dtype)
+    return data.reshape(shape)
+
+
+def _resolve_attr_path(root, dotted_path):
+    obj = root
+    for part in dotted_path.split("."):
+        obj = getattr(obj, part)
+    return obj
+
+
+def _resolve_pta_baseline():
+    pta_path = META.get("pta_baseline_api") or META.get("torch_npu_reference_api") or META.get("pta_api")
+    if not pta_path:
+        raise RuntimeError("No PTA baseline API is declared for this operator")
+    if pta_path.startswith("torch_npu."):
+        import torch_npu
+        return _resolve_attr_path(torch_npu, pta_path[len("torch_npu."):])
+    if pta_path.startswith("torch."):
+        import torch
+        if pta_path.startswith("torch.ops.custom."):
+            import custom_ops  # noqa: F401
+        return _resolve_attr_path(torch, pta_path[len("torch."):])
+    raise RuntimeError(f"Unsupported PTA baseline API: {pta_path}")
+
+
+def _sync_ms(ms):
+    runtime = getattr(ms, "runtime", None)
+    sync = getattr(runtime, "synchronize", None)
+    if callable(sync):
+        sync()
+
+
+def _sync_torch(torch):
+    npu = getattr(torch, "npu", None)
+    sync = getattr(npu, "synchronize", None)
+    if callable(sync):
+        sync()
+
+
+def _primary_output(output):
+    return output[0] if isinstance(output, tuple) else output
+
+
+def _attr_value(attr, value):
+    if value is None:
+        return None
+    if attr.get("dtype", "").startswith(("IntArrayRef", "ShapeVector")) and isinstance(value, list):
+        return tuple(value)
+    return value
+
+
+def _public_func_name():
+    name = META["operator_name"]
+    if META.get("manual") and name.endswith("_op"):
+        return name.removesuffix("_op")
+    return META["ms_api"].rsplit(".", 1)[-1]
+
+
+def _resolve_ms_func():
+    public_name = _public_func_name()
+    try:
+        from custom_ops import get_ops_by_list
+
+        op_module = get_ops_by_list([public_name])
+        if hasattr(op_module, public_name):
+            return getattr(op_module, public_name)
+    except Exception:
+        pass
+    from custom_ops import ops
+
+    return getattr(ops, META["ms_api"].rsplit(".", 1)[-1])
+
+
+def _tensor_values_for_case(case, tensor_factory):
+    return {
+        name: tensor_factory(_array_for_case(case, name))
+        for name in case.get("tensor_inputs", [])
+    }
+
+
+def _ms_args_for_case(case, tensor_factory):
+    tensors = _tensor_values_for_case(case, tensor_factory)
+    attrs = case.get("attributes", {})
+    args = []
+    kwargs = {}
+    positional_args = []
+    for arg in META.get("inputs", []):
+        if arg["name"] in tensors:
+            value = tensors[arg["name"]]
+        elif arg.get("dtype") == "Tensor?":
+            value = None
+        else:
+            raise KeyError(f"missing tensor input {arg['name']!r}")
+        positional_args.append(value)
+        if arg.get("dtype") == "Tensor":
+            args.append(value)
+        else:
+            kwargs[arg["name"]] = value
+    for attr in META.get("attributes", []):
+        raw_value = attrs.get(attr["name"], attr.get("default"))
+        kwargs[attr["name"]] = _attr_value(attr, raw_value)
+        positional_args.append(raw_value)
+    return args, kwargs, positional_args
+
+
+def _pta_args_kwargs_for_case(case, tensor_factory):
+    tensors = {
+        name: tensor_factory(_array_for_case(case, name))
+        for name in case.get("tensor_inputs", [])
+    }
+    attrs = case.get("attributes", {})
+    args = []
+    kwargs = {}
+    for arg in META.get("inputs", []):
+        if arg["name"] in tensors:
+            if arg.get("dtype") == "Tensor":
+                args.append(tensors[arg["name"]])
+            else:
+                kwargs[arg["name"]] = tensors[arg["name"]]
+        elif arg.get("dtype") == "Tensor?":
+            kwargs[arg["name"]] = None
+        else:
+            raise KeyError(f"missing tensor input {arg['name']!r}")
+    for attr in META.get("attributes", []):
+        kwargs[attr["name"]] = _attr_value(attr, attrs.get(attr["name"], attr.get("default")))
+    return args, kwargs
+
+
+def _materialize_ms(output):
+    return _primary_output(output).asnumpy()
+
+
+def _clear_profile_dir(path):
+    if path.exists():
+        shutil.rmtree(path)
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def _run_ms(case):
+    import mindspore as ms
+
+    ms.set_context(device_target="Ascend", mode=ms.PYNATIVE_MODE)
+    dtype = _ms_dtype_for(ms, case.get("dtype", "float32"))
+    args, kwargs, positional_args = _ms_args_for_case(case, lambda array: ms.Tensor(array))
+    func = _resolve_ms_func()
+    try:
+        result = func(*args, **kwargs)
+    except TypeError:
+        result = func(*positional_args)
+    _materialize_ms(result)
+    try:
+        avg_us = timed_call_loop(func, *args, sync_fn=ms_lightweight_sync, **kwargs)
+    except TypeError:
+        avg_us = timed_call_loop(func, *positional_args, sync_fn=ms_lightweight_sync)
+    primary = result[0] if isinstance(result, tuple) else result
+    return primary, avg_us / 1000.0
+
+
+def _run_ms_profiled(case, profile_dir):
+    import mindspore as ms
+    from mindspore import Profiler
+    from mindspore.profiler import AicoreMetrics, ProfilerActivity, ProfilerLevel
+
+    _clear_profile_dir(profile_dir)
+    ms.set_context(device_target="Ascend", mode=ms.PYNATIVE_MODE)
+    args, kwargs, positional_args = _ms_args_for_case(case, lambda array: ms.Tensor(array))
+    func = _resolve_ms_func()
+
+    # -- lightweight loop e2e timing (no Profiler overhead) -----------------
+    try:
+        result = func(*args, **kwargs)
+    except TypeError:
+        result = func(*positional_args)
+    _materialize_ms(result)
+
+    ms_reset_peak_memory()
+    try:
+        avg_us = timed_call_loop(func, *args, sync_fn=ms_lightweight_sync, **kwargs)
+    except TypeError:
+        avg_us = timed_call_loop(func, *positional_args, sync_fn=ms_lightweight_sync)
+    peak_mem_mb = ms_peak_memory_mb()
+    e2e_ms = avg_us / 1000.0
+
+    # -- separate Profiler run for kernel CSV extraction only ----------------
+    profiler = Profiler(
+        output_path=str(profile_dir),
+        profiler_level=ProfilerLevel.Level0,
+        activities=[ProfilerActivity.CPU, ProfilerActivity.NPU],
+        aic_metrics=AicoreMetrics.AiCoreNone,
+        data_simplification=False,
+    )
+    try:
+        func(*args, **kwargs)
+    except TypeError:
+        func(*positional_args)
+    _materialize_ms(result)
+    profiler.analyse()
+
+    return _primary_output(result), e2e_ms, peak_mem_mb
+
+
+def _run_pta(case):
+    import torch
+    import torch_npu  # noqa: F401
+
+    args, kwargs = _pta_args_kwargs_for_case(case, lambda array: torch.from_numpy(array).to("npu"))
+    func = _resolve_pta_baseline()
+    result = func(*args, **kwargs)
+    primary = result[0] if isinstance(result, tuple) else result
+    primary.detach().cpu()
+    avg_us = timed_call_loop(func, *args, sync_fn=torch_lightweight_sync, **kwargs)
+    return primary, avg_us / 1000.0
+
+
+def _run_pta_profiled(case, profile_dir):
+    import torch
+    import torch_npu
+
+    _clear_profile_dir(profile_dir)
+    args, kwargs = _pta_args_kwargs_for_case(case, lambda array: torch.from_numpy(array).to("npu"))
+    func = _resolve_pta_baseline()
+    # warm-up
+    func(*args, **kwargs)
+    torch_lightweight_sync()
+
+    # -- lightweight loop e2e timing (no profiler overhead) -----------------
+    torch_reset_peak_memory()
+    avg_us = timed_call_loop(func, *args, sync_fn=torch_lightweight_sync, **kwargs)
+    peak_mem_mb = torch_peak_memory_mb()
+    e2e_ms = avg_us / 1000.0
+
+    # -- separate Profiler run for trace extraction only ---------------------
+    experimental_config = torch_npu.profiler._ExperimentalConfig(
+        data_simplification=False,
+        profiler_level=torch_npu.profiler.ProfilerLevel.Level2,
+    )
+    with torch_npu.profiler.profile(
+        activities=[
+            torch_npu.profiler.ProfilerActivity.CPU,
+            torch_npu.profiler.ProfilerActivity.NPU,
+        ],
+        schedule=torch_npu.profiler.schedule(wait=0, warmup=0, active=1, repeat=1, skip_first=0),
+        experimental_config=experimental_config,
+        on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(str(profile_dir)),
+    ) as prof:
+        result, _ = timed_call(func, *args, **kwargs)
+        torch_lightweight_sync()
+        prof.step()
+    primary = result[0] if isinstance(result, tuple) else result
+    return primary, e2e_ms, peak_mem_mb
+
+
+def _dtype_probe_case(dtype_name):
+    for case in CASES:
+        if case.get("expect_error") or case.get("require_grad") or case.get("values"):
+            continue
+        probe = dict(case)
+        probe["case_id"] = "dtype_probe_" + dtype_name
+        probe["dtype"] = dtype_name
+        probe.pop("tensor_dtypes", None)
+        return probe
+    raise RuntimeError("No valid case is available for dtype probing")
+
+
+def _run_ms_dtype_probe(case, dtype_name):
+    import mindspore as ms
+
+    ms.set_context(device_target="Ascend", mode=ms.PYNATIVE_MODE)
+    args, kwargs, positional_args = _ms_args_for_case(
+        case,
+        lambda array: _ms_tensor_for_dtype(ms, array, dtype_name),
+    )
+    func = _resolve_ms_func()
+    try:
+        _materialize_ms(func(*args, **kwargs))
+    except TypeError:
+        _materialize_ms(func(*positional_args))
+
+
+def _run_pta_dtype_probe(case, dtype_name):
+    import torch
+    import torch_npu  # noqa: F401
+
+    args, kwargs = _pta_args_kwargs_for_case(
+        case,
+        lambda array: _torch_tensor_for_dtype(torch, array, dtype_name),
+    )
+    func = _resolve_pta_baseline()
+    result = func(*args, **kwargs)
+    primary = result[0] if isinstance(result, tuple) else result
+    primary.detach().cpu()
+
+
+def _write_dtype_support(path, summary):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def test_${safe_name}_dtype_support(tmp_path):
+    if not META.get("has_pta"):
+        pytest.skip("No PTA baseline is declared for this operator")
+    ready, missing = profiler_environment_ready(require_pta=True)
+    if not ready:
+        pytest.skip("Profiler environment is not available: " + ", ".join(missing))
+
+    records = []
+    pta_supported = []
+    ms_supported = []
+    missing_in_ms = []
+    for dtype_name in DTYPE_PROBE_CANDIDATES:
+        case = _dtype_probe_case(dtype_name)
+        record = {"dtype": dtype_name}
+        try:
+            _run_pta_dtype_probe(case, dtype_name)
+        except Exception as exc:
+            record["pta_status"] = "unsupported"
+            record["pta_reason"] = str(exc)
+            records.append(record)
+            continue
+        record["pta_status"] = "supported"
+        pta_supported.append(dtype_name)
+
+        try:
+            _run_ms_dtype_probe(case, dtype_name)
+        except Exception as exc:
+            record["ms_status"] = "unsupported"
+            record["ms_reason"] = str(exc)
+            missing_in_ms.append(dtype_name)
+            records.append(record)
+            continue
+        record["ms_status"] = "supported"
+        ms_supported.append(dtype_name)
+        records.append(record)
+
+    status = "passed" if pta_supported and not missing_in_ms else "coverage_gap"
+    summary = {
+        "status": status,
+        "candidate_dtypes": DTYPE_PROBE_CANDIDATES,
+        "pta_supported": pta_supported,
+        "ms_supported": ms_supported,
+        "missing_in_ms": missing_in_ms,
+        "records": records,
+        "reason": "" if status == "passed" else "MS does not cover every dtype supported by PTA",
+    }
+    _write_dtype_support(Path(tmp_path) / "dtype_support.json", summary)
+    _write_dtype_support(RESULT_DIR / "dtype_support.json", summary)
+    assert status == "passed", summary["reason"]
+
+
+def _build_profile_summary(case_summaries, case_failures, reason):
+    kernel_status = "passed" if case_summaries and all(
+        item["kernel_consistency"]["status"] == "passed" for item in case_summaries
+    ) else "coverage_gap"
+    # Memory is advisory — always report it but never block the conclusion.
+    memory_status = "passed"
+    if case_summaries:
+        for item in case_summaries:
+            mem = item.get("memory_comparison", {})
+            if mem.get("status") not in (None, "not_collected") and mem.get("reason"):
+                memory_status = "note"  # ratio exceeded threshold, noted but not blocking
+                break
+    overall_status = (
+        "passed"
+        if kernel_status == "passed" and not case_failures
+        else "coverage_gap"
+    )
+    return {
+        "operator_name": META["operator_name"],
+        "status": overall_status,
+        "kernel_status": kernel_status,
+        "memory_status": memory_status,
+        "reason": reason,
+        "cases": case_summaries,
+        "case_failures": case_failures,
+    }
+
+
+def _write_current_profile_summary(tmp_path, case_summaries, case_failures, reason):
+    summary = _build_profile_summary(case_summaries, case_failures, reason)
+    write_profile_summary(Path(tmp_path) / "profile_summary.json", summary)
+    write_profile_summary(RESULT_DIR / "profile_summary.json", summary)
+    return summary
+
+
+def test_${safe_name}_profiler_end_to_end(tmp_path):
+    if not META.get("has_pta"):
+        pytest.skip("No PTA baseline is declared for this operator")
+    ready, missing = profiler_environment_ready(require_pta=True)
+    if not ready:
+        pytest.skip("Profiler environment is not available: " + ", ".join(missing))
+
+    case_summaries = []
+    case_failures = []
+    for case in CASES:
+        if case.get("expect_error") or case.get("require_grad"):
+            continue
+        # Skip empty-tensor cases: profiling zero-element kernels is not meaningful.
+        shapes_to_check = []
+        if case.get("shape") is not None:
+            shapes_to_check.append(case["shape"])
+        for s in (case.get("input_shapes") or {}).values():
+            shapes_to_check.append(s)
+        if any(0 in (s if isinstance(s, (list, tuple)) else ()) for s in shapes_to_check):
+            continue
+        case_id = case["case_id"]
+        ms_profile_dir = RESULT_DIR / "raw_profiler" / case_id / "ms"
+        pta_profile_dir = RESULT_DIR / "raw_profiler" / case_id / "pta"
+
+        try:
+            # -- warm-up to stabilise memory allocator ---------------------
+            _run_ms(case)
+            _run_pta(case)
+
+            # -- MS profiled run + memory ----------------------------------
+            ms_out, ms_elapsed_ms, ms_mem_mb = _run_ms_profiled(case, ms_profile_dir)
+
+            # -- PTA profiled run + memory ---------------------------------
+            pta_out, pta_elapsed_ms, pta_mem_mb = _run_pta_profiled(case, pta_profile_dir)
+
+            assert tuple(ms_out.shape) == tuple(pta_out.shape)
+            ms_np = ms_out.asnumpy()
+            pta_np = pta_out.detach().cpu().numpy()
+            assert ms_np.dtype == pta_np.dtype
+            np.testing.assert_allclose(ms_np, pta_np, rtol=1e-3, atol=1e-3)
+            ms_kernel_summary = summarize_kernel_records(extract_kernel_records(ms_profile_dir))
+            pta_kernel_summary = summarize_kernel_records(extract_kernel_records(pta_profile_dir))
+            kernel_consistency = compare_kernel_summaries(ms_kernel_summary, pta_kernel_summary)
+            memory_comparison = compare_memory(ms_mem_mb, pta_mem_mb)
+            case_summaries.append(
+                {
+                    "case_id": case_id,
+                    "ms_end_to_end_ms": ms_elapsed_ms,
+                    "pta_end_to_end_ms": pta_elapsed_ms,
+                    "ms_kernel_total_us": ms_kernel_summary["total_duration_us"],
+                    "pta_kernel_total_us": pta_kernel_summary["total_duration_us"],
+                    "ms_kernel_sequence": ms_kernel_summary["sequence"],
+                    "pta_kernel_sequence": pta_kernel_summary["sequence"],
+                    "kernel_consistency": kernel_consistency,
+                    "ms_peak_memory_mb": ms_mem_mb,
+                    "pta_peak_memory_mb": pta_mem_mb,
+                    "memory_comparison": memory_comparison,
+                    "ms_profile_dir": str(ms_profile_dir),
+                    "pta_profile_dir": str(pta_profile_dir),
+                    "output_shape": list(ms_np.shape),
+                    "output_dtype": str(ms_np.dtype),
+                }
+            )
+            _write_current_profile_summary(
+                tmp_path,
+                case_summaries,
+                case_failures,
+                "latest profiler case completed",
+            )
+        except Exception as exc:
+            case_failures.append(
+                {
+                    "case_id": case_id,
+                    "classification": "operator_bug",
+                    "reason": str(exc),
+                    "ms_profile_dir": str(ms_profile_dir),
+                    "pta_profile_dir": str(pta_profile_dir),
+                }
+            )
+            _write_current_profile_summary(
+                tmp_path,
+                case_summaries,
+                case_failures,
+                "profiler failed before all cases completed",
+            )
+            raise
+
+    summary = _write_current_profile_summary(
+        tmp_path,
+        case_summaries,
+        case_failures,
+        "MS/PTA end-to-end timings, kernel timings, kernel sequences, and peak memory collected.",
+    )
+    assert summary["status"] == "passed", summary["reason"]

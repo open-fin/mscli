@@ -24,7 +24,9 @@
     "fix_applied",
     "revalidated",
     "revalidation_required_scopes",
-    "revalidation_covered_scopes"
+    "revalidation_covered_scopes",
+    "selected_environment_guidance",
+    "remote_asset_guidance"
   ],
   "properties": {
     "schema_version": {
@@ -115,6 +117,12 @@
       "items": {
         "type": "string"
       }
+    },
+    "selected_environment_guidance": {
+      "type": "object"
+    },
+    "remote_asset_guidance": {
+      "type": ["object", "null"]
     }
   }
 }

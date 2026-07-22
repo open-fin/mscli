@@ -5,6 +5,8 @@ import re
 from pathlib import Path
 from typing import Optional
 
+from perf_common import write_json
+
 
 SCRIPT_HINTS = ("train", "main", "run", "infer", "launch")
 SCRIPT_SUFFIXES = {".py", ".sh"}
@@ -46,6 +48,23 @@ def recent_files(root: Path, limit: int) -> list[Path]:
         for path in root.rglob("*")
         if path.is_file() and not any(part in IGNORE_DIRS for part in path.parts)
     ]
+    # Sort by mtime but cap stat() calls to avoid O(large_workspace) cost.
+    # Pre-collect (mtime, path) only up to a reasonable ceiling.
+    ceiling = limit * 10
+    if len(files) > ceiling:
+        # Rough cut: keep only files whose name suggests recency signals.
+        # This avoids stat-ing thousands of irrelevant files.
+        scored = []
+        for path in files:
+            name = path.name.lower()
+            bonus = 0
+            if path.suffix in {".py", ".sh"}:
+                bonus += 2
+            if any(token in name for token in ("train", "run", "log", "prof", "trace", "config")):
+                bonus += 1
+            scored.append((bonus, path))
+        scored.sort(key=lambda item: item[0], reverse=True)
+        files = [p for _, p in scored[:ceiling]]
     files.sort(key=lambda path: path.stat().st_mtime, reverse=True)
     return files[:limit]
 
@@ -180,11 +199,16 @@ def main() -> int:
     parser.add_argument("--root", dest="root_flag", help="workspace root to scan")
     parser.add_argument("--working-dir", dest="working_dir_flag", help="alias of --root")
     parser.add_argument("--limit", type=int, default=200, help="maximum recent files to inspect")
+    parser.add_argument("--output-json", help="output JSON path (prints to stdout if omitted)")
     args = parser.parse_args()
 
     root_arg = args.root_flag or args.working_dir_flag or args.root_path or "."
     report = summarize(Path(root_arg).resolve(), args.limit)
-    print(json.dumps(report, indent=2, ensure_ascii=False))
+
+    if args.output_json:
+        write_json(Path(args.output_json), report)
+    else:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0
 
 

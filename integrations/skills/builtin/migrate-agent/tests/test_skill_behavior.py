@@ -28,6 +28,7 @@ def test_references_and_scripts_are_declared():
     assert "`references/verification.md`" in text
     assert "`references/hf-transformers-guardrails.md`" in text
     assert "`references/hf-transformers-env.md`" in text
+    assert "`references/hf-transformers-standalone-model-repo.md`" in text
     assert "`scripts/collect_migration_context.py`" in text
     assert "`scripts/summarize_migration_profile.py`" in text
     assert "`scripts/hf_transformers_auto_convert.py`" in text
@@ -38,3 +39,18 @@ def test_verification_requires_minimal_import_before_completion():
     hf_text = (SKILL_MD.parent / "references" / "hf-transformers.md").read_text(encoding="utf-8")
     assert "`from transformers import xxx`" in hf_text
     assert "Do not mark the migration complete before the `from transformers import xxx`" in hf_text
+
+
+def test_standalone_transformers_repo_rules_are_present():
+    hf_text = (SKILL_MD.parent / "references" / "hf-transformers.md").read_text(encoding="utf-8")
+    standalone_text = (
+        SKILL_MD.parent / "references" / "hf-transformers-standalone-model-repo.md"
+    ).read_text(encoding="utf-8")
+
+    assert "For upstream `transformers` source-tree migrations" in hf_text
+    assert "For standalone HF-style model repos" in hf_text
+    assert "trust_remote_code=False" in hf_text
+    assert "Do not migrate `configuration_*.py`, `tokenization_*.py`, or" not in hf_text
+    assert "MindOne may not have a local `AutoTokenizer` registration path" in standalone_text
+    assert "Do not add PyTorch-style device compatibility" in standalone_text
+    assert "Do not load `AutoProcessor` inside model `__init__`" in standalone_text

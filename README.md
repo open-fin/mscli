@@ -11,16 +11,16 @@ It is built on two closely related parts:
 
 ## Latest Version
 
-Latest version: `MindSpore Model Agent v0.1.4`. See [changelog.md](changelog.md) for update history.
+Latest version: `MindSpore Model Agent v0.1.5`. See [changelog.md](changelog.md) for update history.
 
 Highlights:
 
-- `[skills]` Added baseline analysis support for Ascend A2 training runtime failures, accuracy drift, and performance bottlenecks.
-- `[skills]` Added Hugging Face Transformers model migration support and integrated `mhc` / `attn-residual` into the Qwen3 skill template.
-- `[skills]` Integrated `openjiuwen claw`, with precision-location examples and deployment guidance.
-- `[cli]` Improved live task progress feedback, including during hidden tool-call assembly.
-- `[cli]` Added diff view for edit-style tool results and improved transcript layout and readability.
-- `[cli]` Fixed shell interrupt handling in truncated streaming output scenarios, unified bug / issue data structures, and fixed GitCode-incompatible install examples.
+- `[mcp]` Added end-to-end MCP support with project approval, stdio / HTTP transports, tool discovery, lifecycle controls, and reconnect handling.
+- `[memory]` Added file-backed automatic memory using `MEMORY.md` and project `MSCLI.md`, plus `/init` and runtime reasoning-effort controls.
+- `[cli]` Added headless `exec` workflows and session resume hints for scripting and CI use cases.
+- `[tools]` Added external-path policy enforcement, capability metadata, standardized result states, lifecycle events, and persisted large-result artifacts.
+- `[skills]` Synced the latest built-in MindSpore skills and expanded operator development with dedicated ACLNN and custom-op builders.
+- `[security]` Hardened permission prompts, shell command filtering, safe-command classification, and update binary integrity verification.
 
 ## MindSpore CLI
 

@@ -70,6 +70,9 @@ Read files in this order when they exist:
 7. summarized operator files when present in parsed CANN output:
    - `PROF_xxx.../mindstudio_profiler_output/op_summary_*.csv`
    - `PROF_xxx.../mindstudio_profiler_output/task_time_*.csv`
+8. AIC microarchitecture metrics (optional, requires `msprof op --aic-metrics`):
+   - `PROF_xxx.../device_xxx/data/aic_metrics_*.csv`
+   - `PROF_xxx.../device_xxx/data/aic/*.csv`
 
 If a `hotspot_summary.json` or `hotspot_summary.md` already exists in the skill
 run output, use that before re-reading raw operator tables.
@@ -184,3 +187,28 @@ files include bottleneck warnings and suggestions.
 - When the environment diverges from the official layout, trust the actual
   generated file names in the user’s profiler directory and adapt the same
   priority order.
+
+## AIC Microarchitecture Metrics
+
+AIC (AI Core) PMU metrics provide hardware-level performance data for each
+operator execution. They are collected via `msprof op --aic-metrics` and are
+not included in default profiler output.
+
+When AIC metrics are available, they enable:
+
+- Cube/Vector utilization analysis (compute efficiency)
+- L2 cache hit rate analysis (memory access patterns)
+- Pipeline stall analysis (instruction scheduling)
+
+See `references/aic-microarch-signatures.md` for bottleneck classification
+rules when AIC data is present.
+
+## Hardware Detection
+
+The profiler output may contain hardware information in:
+
+- `profiler_info.json`: `chip_name`, `device_info`, or nested `hardware_info`
+- Directory naming patterns: sometimes encode chip family
+
+When hardware is identifiable, use it for MFU calculation and Roofline
+analysis. See `references/hardware-specs.md` for the hardware model database.

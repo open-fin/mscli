@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mindspore-skills.dev/schema/workspace-readiness-lock-1.0.0.json",
+  "title": "Workspace Readiness Lock",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "producer",
+    "mode",
+    "engine",
+    "status",
+    "target",
+    "launcher",
+    "runtime",
+    "assets"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "readiness.assessment.v1"
+    },
+    "producer": {
+      "type": "string",
+      "const": "readiness-agent"
+    },
+    "mode": {
+      "type": "string",
+      "const": "check"
+    },
+    "engine": {
+      "type": "string",
+      "const": "assessment"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["NEEDS_CONFIRMATION", "READY", "WARN", "BLOCKED"]
+    },
+    "target": {
+      "type": ["object", "null"]
+    },
+    "launcher": {
+      "type": ["object", "null"]
+    },
+    "runtime": {
+      "type": ["object", "null"]
+    },
+    "assets": {
+      "type": ["object", "null"]
+    },
+    "current_confirmation": {
+      "type": ["object", "null"]
+    }
+  }
+}

@@ -1,10 +1,16 @@
 # Readiness-Agent Product Contract
 
-`readiness-agent` has one user-visible responsibility:
+`readiness-agent` has one user-visible domain responsibility:
 
-- certify whether the intended local single-machine task is runnable now
+- determine pre-run readiness for a selected local single-machine training or
+  inference workspace
 
-That certification must stay scoped to the selected workspace. Evidence from
+It exposes this responsibility through two modes:
+
+- `check`: read-only launch-readiness assessment
+- `fix`: safe user-space remediation
+
+Readiness decisions must stay scoped to the selected workspace. Evidence from
 other repos, home-directory projects, or bundled skill examples cannot replace
 missing workspace-local scripts, assets, or framework signals unless the user
 explicitly points to those paths.
@@ -53,12 +59,22 @@ The internal verdict should continue to preserve:
 - `fix_applied`
 - `revalidated`
 
+## Artifact Contract
+
+`readiness-output/latest/readiness-agent/*` is the canonical downstream
+contract. Integrations should read current assessment state from this location,
+including `workspace-readiness.lock.json`, `confirmation-latest.json` when a
+confirmation is pending, and `run-ref.json`.
+
+`readiness-output/attempts/<attempt_id>/current|final/*` is retained as a
+formal audit/debug trail. Attempt snapshots may include raw verdict payloads so
+that a run can be inspected after the fact, but those internals are not a
+stable downstream API. Tests and consumers should only depend on the minimal
+attempt structure and the `attempt_id` reference from `run-ref.json`.
+
 ## Interaction Rule
 
-After `READY` or `WARN`, the skill must explicitly ask:
-
-- `Do you want me to run the real model script now?`
-
-That prompt belongs in the final user-facing result. Running the real model
-script is a separate action after readiness, not part of the readiness
-certification threshold.
+After `check`, the final user-facing result must say that no real train or
+inference command was executed. Point users to `/preflight` for asset validation
+or to a separate explicit run command outside check mode for workload
+execution.

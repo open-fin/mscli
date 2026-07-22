@@ -27,9 +27,13 @@ Use this skill when the user wants to:
 Do not use this skill for:
 
 - runtime failure diagnosis
-- environment readiness or dependency repair
 - pure performance tuning
 - operator implementation work
+
+Environment readiness and dependency repair are owned by `readiness-agent`.
+However, when the user's goal is to run, train, infer, or otherwise make the
+migrated result runnable on the current machine, this skill must prepare a
+clear handoff to `readiness-agent` after migration verification.
 
 ## Workflow
 
@@ -39,6 +43,7 @@ Run the workflow in this order:
 2. `route-selector`
 3. `migration-builder`
 4. `verification-and-report`
+5. `readiness-handoff` when the user intent includes local execution
 
 ## Stage 1. Migration Analyzer
 
@@ -57,6 +62,7 @@ You must identify:
   - generic MindSpore-style implementation
 - workspace shape:
   - library-style repo
+  - standalone HF-style transformers model repo
   - standalone model repo
   - partial local copy
 - task or model family when visible
@@ -68,6 +74,17 @@ You must identify:
 
 Build a `MigrationProfile` that captures the source type, workspace shape,
 target direction, migration goal, key evidence, and confidence.
+
+Also classify the end goal:
+
+- `port-only`
+- `port-and-run`
+- `port-and-train`
+- `port-and-infer`
+
+Treat wording such as `run`, `train`, `infer`, `can run`, `set up locally`,
+`on this machine`, or `make it runnable` as evidence that the user needs local
+execution readiness in addition to migration.
 
 ## Stage 2. Route Selector
 
@@ -90,6 +107,12 @@ Record:
 - reason
 - expected migration artifacts
 - rejected alternatives and why
+- expected runtime stack after migration, when visible:
+  - `torch`
+  - `transformers`
+  - `mindspore`
+  - `mindone`
+  - route-specific helper packages
 
 ## Stage 3. Migration Builder
 
@@ -106,6 +129,7 @@ helper assets:
 - `references/hf-transformers.md`
 - `references/hf-transformers-guardrails.md`
 - `references/hf-transformers-env.md`
+- `references/hf-transformers-standalone-model-repo.md`
 - `scripts/hf_transformers_auto_convert.py`
 - `scripts/hf_transformers_auto_convert.requirements.txt`
 
@@ -126,6 +150,8 @@ Expected outputs may include:
 - config mapping
 - minimal runnable example
 - test or verification hooks when required
+- target-side unit tests when source tests exist or the user requests test migration
+- runtime requirements handoff for readiness checking
 
 ## Stage 4. Verification and Report
 
@@ -137,6 +163,7 @@ At minimum, verify:
 - migration artifacts produced
 - minimal runnable or import path when possible
 - verification status
+- target-side unit test files, commands, and results when tests were migrated
 - remaining gaps or follow-up work
 
 The final report must include:
@@ -148,6 +175,43 @@ The final report must include:
 - risks and remaining gaps
 - next actions
 
+When the user intent includes local execution, also include a concise
+`ReadinessHandoff` that captures:
+
+- intended target:
+  - `training`
+  - `inference`
+- expected framework/runtime stack
+- required Python packages
+- expected entry script or runnable path
+- expected model/tokenizer/checkpoint assets
+- whether migration artifacts are already sufficient for readiness checking
+- whether safe local readiness repair is likely needed
+
+## Stage 5. Readiness Handoff
+
+Do not run environment repair logic inside `migrate-agent`.
+
+If the user intent is `port-only`, stop after the migration report.
+
+If the user intent includes `run`, `train`, `infer`, or local execution
+readiness, hand off to `readiness-agent` after Stage 4.
+
+In that handoff, explicitly tell `readiness-agent`:
+
+- this is a post-migration readiness check
+- the selected route and target direction
+- whether the intended target is training or inference
+- which packages must exist locally
+- which entry script or runnable path should exist
+- which assets must exist locally
+- whether the user asked only for readiness or also for safe local fixes
+
+For example, when handling a Hugging Face Transformers migration, the handoff
+should at minimum clarify whether the source-side `torch`/`transformers`
+assumptions and the target-side `mindspore`/`mindone` stack are present or need
+preparation locally.
+
 ## References
 
 Load these references when needed:
@@ -157,6 +221,7 @@ Load these references when needed:
 - `references/hf-transformers.md`
 - `references/hf-transformers-guardrails.md`
 - `references/hf-transformers-env.md`
+- `references/hf-transformers-standalone-model-repo.md`
 - `references/hf-diffusers.md`
 - `references/generic-pytorch.md`
 
@@ -176,3 +241,5 @@ Use these helper scripts when useful:
   repo.
 - Keep the top-level skill focused on route choice and migration outcome rather
   than expanding every route-specific detail inline.
+- Treat `migrate-agent` and `readiness-agent` as sequential phases when the
+  user's real goal is "make this model run here", not as unrelated workflows.

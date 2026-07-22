@@ -26,7 +26,8 @@ def test_performance_profile_and_bottleneck_validation_are_present():
 
 def test_references_and_scripts_are_declared():
     text = SKILL_MD.read_text(encoding="utf-8")
-    assert "`references/perf-validation.md`" in text
+    # perf-validation.md was folded into validation-playbook.md
+    assert "`references/validation-playbook.md`" in text
     assert "`scripts/find_run_context.py`" in text
     assert "`scripts/locate_profiler_output.py`" in text
     assert "`scripts/collect_msprof.sh`" in text

@@ -35,13 +35,15 @@ def test_manifest_declares_perf_inputs_and_outputs():
     assert 'out_dir_layout' in text
 
 
-def test_skill_describes_four_stage_performance_workflow():
+def test_skill_describes_performance_workflow_stages():
     text = SKILL.read_text(encoding="utf-8")
     assert "# Performance Agent" in text
-    assert "1. `performance-analyzer`" in text
-    assert "2. `bottleneck-validator`" in text
-    assert "3. `snapshot-builder`" in text
-    assert "4. `report-builder`" in text
+    # The workflow now uses stage numbering (0.5, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 7)
+    assert "data-validator" in text.lower() or "Stage 0.5" in text
+    assert "performance-analyzer" in text.lower() or "Stage 1" in text
+    assert "bottleneck-validator" in text.lower() or "Stage 2" in text
+    assert "snapshot-builder" in text.lower() or "Stage 3" in text
+    assert "report-builder" in text.lower() or "Stage 4" in text
     assert "scripts/locate_profiler_output.py" in text
     assert "scripts/summarize_trace_gaps.py" in text
     assert "scripts/build_performance_report.py" in text

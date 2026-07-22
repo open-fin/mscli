@@ -53,6 +53,18 @@ inputs:
     type: "path"
     required: false
     description: "Optional after-change metric JSON for deterministic validation comparison."
+  - name: "hardware_spec"
+    type: "string"
+    required: false
+    description: "Hardware model name, e.g. ascend_910b1, atlas_a2_280t. Auto-detected from profiler data when possible."
+  - name: "parallel_config"
+    type: "string"
+    required: false
+    description: "Parallel strategy description, e.g. TP=4,PP=1,DP=2. Auto-detected from cluster directory structure when possible."
+  - name: "model_config"
+    type: "path"
+    required: false
+    description: "Optional JSON file with model configuration (hidden_size, num_layers, seq_len, vocab_size) for precise MFU calculation."
   - name: "output_dir"
     type: "path"
     required: false

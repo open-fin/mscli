@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+"""Classify performance bottlenecks from multi-dimensional analysis artifacts.
+
+Produces ranked bottleneck candidates with confidence scores and evidence.
+"""
 import argparse
 import json
 from pathlib import Path
@@ -26,12 +30,22 @@ def candidate(
 def add_candidate(candidates_by_name: dict[str, dict], item: dict) -> None:
     current = candidates_by_name.get(item["name"])
     if not current:
-        candidates_by_name[item["name"]] = item
+        candidates_by_name[item["name"]] = {
+            "name": item["name"],
+            "confidence": item["confidence"],
+            "evidence": list(item["evidence"]),
+            "validation_checks": list(item["validation_checks"]),
+            "optimization_hints": list(item["optimization_hints"]),
+        }
         return
-    current["confidence"] = round(max(current["confidence"], item["confidence"]), 3)
-    for key in ("evidence", "validation_checks", "optimization_hints"):
-        merged = current[key] + [value for value in item[key] if value not in current[key]]
-        current[key] = merged
+    merged = {
+        "name": item["name"],
+        "confidence": round(max(current["confidence"], item["confidence"]), 3),
+        "evidence": current["evidence"] + [v for v in item["evidence"] if v not in current["evidence"]],
+        "validation_checks": current["validation_checks"] + [v for v in item["validation_checks"] if v not in current["validation_checks"]],
+        "optimization_hints": current["optimization_hints"] + [v for v in item["optimization_hints"] if v not in current["optimization_hints"]],
+    }
+    candidates_by_name[item["name"]] = merged
 
 
 def classify(
@@ -42,6 +56,14 @@ def classify(
     input_summary: Optional[dict],
     trace_gaps: Optional[dict],
     hotspot: Optional[dict],
+    mfu: Optional[dict] = None,
+    cluster: Optional[dict] = None,
+    jitter: Optional[dict] = None,
+    fusion: Optional[dict] = None,
+    degradation: Optional[dict] = None,
+    affinity: Optional[dict] = None,
+    collective_types: Optional[dict] = None,
+    rank_variance: Optional[dict] = None,
 ) -> list[dict]:
     candidates_by_name: dict[str, dict] = {}
 
@@ -201,7 +223,153 @@ def classify(
             ),
         )
 
+    # New: Low MFU bottleneck
+    if mfu and mfu.get("estimated_mfu") is not None:
+        mfu_val = mfu["estimated_mfu"]
+        if mfu_val < 0.30:
+            add_candidate(
+                candidates_by_name,
+                candidate(
+                    "low_mfu",
+                    0.75 if mfu_val < 0.20 else 0.65,
+                    [f"estimated MFU: {mfu_val*100:.1f}%", f"MFU level: {mfu.get('mfu_level', 'unknown')}"],
+                    ["compare MFU after enabling graph compilation", "compare operator fusion coverage"],
+                    ["enable graph compilation (GRAPH_MODE / torch.compile)", "check for excessive small operators", "enable operator fusion"],
+                ),
+            )
+
+    # New: Rank imbalance
+    if cluster and cluster.get("slow_ranks"):
+        analysis = cluster.get("analysis", {})
+        bt_type = analysis.get("bottleneck_type", "general")
+        slow_ranks = cluster["slow_ranks"]
+        add_candidate(
+            candidates_by_name,
+            candidate(
+                "rank_imbalance",
+                0.78,
+                [f"slow ranks: {slow_ranks}", f"bottleneck type: {bt_type}", analysis.get("diagnosis", "")],
+                ["compare per-rank step times", "compare operator stats between slow and fast ranks"],
+                [
+                    f"investigate Rank {slow_ranks[0]} ({bt_type})",
+                    "check CPU affinity and NUMA binding",
+                    "compare API dispatch stats" if bt_type == "host_dispatch" else "compare operator stats",
+                ],
+            ),
+        )
+
+    # New: Jitter
+    if jitter:
+        step_jitter = jitter.get("step_time_jitter", {})
+        cv = step_jitter.get("cv")
+        if cv and cv > 0.15:
+            add_candidate(
+                candidates_by_name,
+                candidate(
+                    "jitter",
+                    0.60 if cv > 0.20 else 0.50,
+                    [f"step time CV: {cv*100:.1f}%", f"status: {step_jitter.get('status')}"],
+                    ["compare step time CV after fixes", "compare outlier count"],
+                    ["pad sequences to fixed lengths", "enable CPU affinity", "check for GC pauses"],
+                ),
+            )
+
+    # New: Fusion opportunity
+    if fusion and fusion.get("fusion_analysis_available"):
+        opportunities = fusion.get("opportunities", [])
+        if opportunities:
+            top_opp = opportunities[0]
+            combined_share = top_opp.get("combined_share_percent", 0)
+            add_candidate(
+                candidates_by_name,
+                candidate(
+                    "fusion_opportunity",
+                    0.70 if combined_share >= 20 else 0.55,
+                    [f"fusion_type: {top_opp.get('type', 'unknown')}", f"combined_share: {combined_share}%"],
+                    [f"compare {top_opp.get('type', 'unknown')} operator time after fusion"],
+                    [f"apply {top_opp.get('replacement_api', 'fused variant')}", top_opp.get("description", "enable operator fusion")],
+                ),
+            )
+
+    # New: Cluster degradation
+    if degradation and degradation.get("degradation_classification_available"):
+        primary_type = degradation.get("primary_type")
+        sub = degradation.get("sub_classification", {})
+        if primary_type:
+            add_candidate(
+                candidates_by_name,
+                candidate(
+                    "cluster_degradation",
+                    sub.get("confidence", 0.60),
+                    [f"degradation_type: {primary_type}", f"likely_cause: {sub.get('likely_cause', 'unknown')}"],
+                    degradation.get("evidence", [])[:3],
+                    degradation.get("recommended_actions", [])[:3],
+                ),
+            )
+
+    # New: NPU affinity gap
+    if affinity and affinity.get("npu_affinity_analysis_available"):
+        score = affinity.get("overall_affinity_score", 1.0)
+        if score < 0.8:
+            total_findings = affinity.get("total_findings", 0)
+            add_candidate(
+                candidates_by_name,
+                candidate(
+                    "npu_affinity_gap",
+                    0.65 if score < 0.6 else 0.50,
+                    [f"affinity_score: {score}", f"total_findings: {total_findings}"],
+                    ["compare affinity score after applying four-step fixes"],
+                    [affinity.get("priority_fix", "Apply NPU affinity four-step optimization")],
+                ),
+            )
+
+    # New: SyncBN synchronization bottleneck
+    if collective_types and collective_types.get("collective_type_analysis_available"):
+        syncbn_share = collective_types.get("syncbn_share_percent", 0)
+        syncbn_dominant = collective_types.get("syncbn_dominant", False)
+        if syncbn_share > 10:
+            evidence = [f"SyncBN share: {syncbn_share:.1f}%"]
+            if syncbn_dominant:
+                evidence.append("SyncBN is dominant collective type")
+            add_candidate(
+                candidates_by_name,
+                candidate(
+                    "syncbn_synchronization",
+                    0.78 if syncbn_dominant else 0.60,
+                    evidence,
+                    ["compare SyncBN time share after switching to GroupNorm"],
+                    [
+                        "Consider replacing SyncBN with GroupNorm or FrozenBN",
+                        "Reduce SyncBN synchronization frequency if possible",
+                        "Check if batch normalization can be computed locally",
+                    ],
+                ),
+            )
+
+    # New: Rank compute jitter
+    if rank_variance and rank_variance.get("rank_variance_analysis_available"):
+        jittery_ranks = rank_variance.get("jittery_ranks", [])
+        worst_cv = rank_variance.get("worst_rank_cv", 0)
+        drag = rank_variance.get("drag_effect_ms", 0)
+        if jittery_ranks and worst_cv > 0.10:
+            rank_str = ", ".join(str(r) for r in jittery_ranks[:3])
+            add_candidate(
+                candidates_by_name,
+                candidate(
+                    "rank_compute_jitter",
+                    0.75 if worst_cv > 0.20 else 0.60,
+                    [f"jittery ranks: [{rank_str}]", f"worst CV: {worst_cv:.3f}", f"drag effect: {drag:.1f}ms"],
+                    ["compare per-rank CV after stabilizing compute"],
+                    [
+                        "Investigate compute instability on jittery rank(s)",
+                        "Check for dynamic shapes, GC pauses, or CPU scheduling",
+                        "Enable CPU affinity (numactl/taskset)",
+                    ],
+                ),
+            )
+
     candidates = list(candidates_by_name.values())
+
     if not candidates:
         candidates.append(
             candidate(
@@ -226,18 +394,38 @@ def main() -> int:
     parser.add_argument("--input-json", help="input summary JSON path")
     parser.add_argument("--trace-gaps-json", help="trace-gap summary JSON path")
     parser.add_argument("--hotspot-json", help="hotspot summary JSON path")
+    parser.add_argument("--mfu-json", help="MFU calculation JSON path")
+    parser.add_argument("--cluster-json", help="cluster analysis JSON path")
+    parser.add_argument("--jitter-json", help="jitter analysis JSON path")
+    parser.add_argument("--fusion-json", help="operator fusion analysis JSON path")
+    parser.add_argument("--degradation-json", help="cluster degradation classification JSON path")
+    parser.add_argument("--affinity-json", help="NPU affinity analysis JSON path")
+    parser.add_argument("--collective-types-json", help="Collective type analysis JSON path")
+    parser.add_argument("--rank-variance-json", help="Rank variance analysis JSON path")
     parser.add_argument("--output-json", required=True, help="path to write the bottleneck classification JSON")
     args = parser.parse_args()
 
-    profile = json.loads(Path(args.profile_json).read_text(encoding="utf-8"))
+    try:
+        profile = json.loads(Path(args.profile_json).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"Error reading profile JSON: {e}", file=__import__("sys").stderr)
+        return 1
     step = load_optional_json(args.step_json)
     communication = load_optional_json(args.communication_json)
     memory = load_optional_json(args.memory_json)
     input_summary = load_optional_json(args.input_json)
     trace_gaps = load_optional_json(args.trace_gaps_json)
     hotspot = load_optional_json(args.hotspot_json)
+    mfu = load_optional_json(args.mfu_json)
+    cluster = load_optional_json(args.cluster_json)
+    jitter = load_optional_json(args.jitter_json)
+    fusion = load_optional_json(args.fusion_json)
+    degradation = load_optional_json(args.degradation_json)
+    affinity = load_optional_json(args.affinity_json)
+    collective_types = load_optional_json(args.collective_types_json)
+    rank_variance = load_optional_json(args.rank_variance_json)
 
-    ranked = classify(profile, step, communication, memory, input_summary, trace_gaps, hotspot)
+    ranked = classify(profile, step, communication, memory, input_summary, trace_gaps, hotspot, mfu, cluster, jitter, fusion, degradation, affinity, collective_types, rank_variance)
     report = {
         "schema_version": "performance-agent/0.1",
         "skill": "performance-agent",

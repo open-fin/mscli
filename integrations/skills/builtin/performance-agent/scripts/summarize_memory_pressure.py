@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
+"""Summarize memory pressure from Ascend profiler CSV exports.
+
+Extends basic peak/operator memory analysis with:
+- Memory leak detection via linear regression on time-series data
+- Memory fragmentation estimation via coefficient of variation
+- OOM risk assessment via multi-factor scoring
+"""
 import argparse
-import csv
 import json
+import math
+import sys
 from pathlib import Path
 from typing import Optional
 
-from perf_common import normalize_key, parse_number, write_json
+from perf_common import HARDWARE_SPECS, load_csv_rows, normalize_key, parse_number, write_json
 
 
 NAME_KEYS = {"op_name", "operator_name", "operator", "name", "kernel_name", "module_name"}
@@ -19,14 +27,6 @@ MEMORY_KEYS = {
     "peak_memory",
     "peak_mem",
 }
-
-
-def load_rows(path: Path) -> list[dict[str, str]]:
-    with path.open("r", encoding="utf-8", errors="replace", newline="") as handle:
-        reader = csv.DictReader(handle)
-        if not reader.fieldnames:
-            return []
-        return [dict(row) for row in reader]
 
 
 def detect_name_and_memory_fields(
@@ -76,7 +76,8 @@ def summarize_peak_memory(
     peak_value = None
     for field in rows[0].keys():
         key = normalize_key(field)
-        if "mem" not in key and "memory" not in key:
+        # Also check for allocated/reserved/active which don't contain "mem" in the key
+        if not any(k in key for k in ("mem", "memory", "allocated", "reserved", "active")):
             continue
         for row in rows:
             value = parse_number(row.get(field))
@@ -86,6 +87,233 @@ def summarize_peak_memory(
                 peak_value = value
                 best_field = field
     return peak_value, best_field
+
+
+def detect_memory_leak(
+    rows: list[dict[str, str]], r_squared_threshold: float = 0.8
+) -> Optional[dict]:
+    """Detect memory leak via linear regression on time-series memory data.
+
+    Looks for a column with step/index data and a memory column, then fits
+    a linear model. If R-squared exceeds the threshold and the slope is
+    positive, a leak is flagged.
+
+    Returns leak analysis dict or None if data is insufficient.
+    """
+    if len(rows) < 10:
+        return None
+
+    # Find memory column (prefer allocated/reserved over peak)
+    memory_field = None
+    for field in rows[0].keys():
+        key = normalize_key(field)
+        if key in ("allocated_mb", "reserved_mb", "memory_mb"):
+            memory_field = field
+            break
+    if memory_field is None:
+        for field in rows[0].keys():
+            key = normalize_key(field)
+            if "alloc" in key or "used" in key or "memory" in key:
+                memory_field = field
+                break
+    if memory_field is None:
+        return None
+
+    # Extract time-series values using row index as time proxy
+    values: list[float] = []
+    for row in rows:
+        val = parse_number(row.get(memory_field))
+        if val is not None:
+            values.append(val)
+
+    if len(values) < 10:
+        return None
+
+    # Linear regression: y = slope * x + intercept
+    n = len(values)
+    x_mean = (n - 1) / 2.0
+    y_mean = sum(values) / n
+
+    ss_xy = sum((i - x_mean) * (values[i] - y_mean) for i in range(n))
+    ss_xx = sum((i - x_mean) ** 2 for i in range(n))
+    ss_yy = sum((values[i] - y_mean) ** 2 for i in range(n))
+
+    if ss_xx == 0 or ss_yy == 0:
+        return None
+
+    slope = ss_xy / ss_xx
+    r_squared = (ss_xy ** 2) / (ss_xx * ss_yy)
+
+    leak_detected = r_squared > r_squared_threshold and slope > 0
+
+    return {
+        "leak_detected": leak_detected,
+        "slope_mb_per_step": round(slope, 6),
+        "r_squared": round(r_squared, 4),
+        "confidence": "high" if r_squared > 0.9 else "moderate" if r_squared > 0.8 else "low",
+        "field_analyzed": memory_field,
+        "samples": n,
+        "total_growth_mb": round(slope * n, 3),
+    }
+
+
+def calculate_fragmentation(
+    rows: list[dict[str, str]]
+) -> Optional[dict]:
+    """Estimate memory fragmentation via coefficient of variation of free memory.
+
+    When free memory varies wildly across steps, it suggests fragmentation
+    (interleaved allocation/deallocation patterns).
+
+    Returns fragmentation analysis dict or None.
+    """
+    if len(rows) < 5:
+        return None
+
+    # Find free/available memory column
+    free_field = None
+    for field in rows[0].keys():
+        key = normalize_key(field)
+        if key in ("free_mb", "available_mb", "free_memory_mb"):
+            free_field = field
+            break
+    if free_field is None:
+        for field in rows[0].keys():
+            key = normalize_key(field)
+            if "free" in key or "available" in key:
+                free_field = field
+                break
+    if free_field is None:
+        return None
+
+    free_values: list[float] = []
+    for row in rows:
+        val = parse_number(row.get(free_field))
+        if val is not None and val >= 0:
+            free_values.append(val)
+
+    if len(free_values) < 5:
+        return None
+
+    mean_free = sum(free_values) / len(free_values)
+    if mean_free <= 0:
+        return None
+
+    variance = sum((v - mean_free) ** 2 for v in free_values) / len(free_values)
+    std_free = math.sqrt(variance)
+    cv = std_free / mean_free
+
+    # CV thresholds for fragmentation severity
+    if cv < 0.05:
+        level = "low"
+    elif cv < 0.15:
+        level = "moderate"
+    else:
+        level = "high"
+
+    return {
+        "fragmentation_level": level,
+        "free_memory_cv": round(cv, 4),
+        "mean_free_mb": round(mean_free, 3),
+        "std_free_mb": round(std_free, 3),
+        "field_analyzed": free_field,
+        "samples": len(free_values),
+    }
+
+
+def assess_oom_risk(
+    peak_memory_mb: Optional[float],
+    hbm_capacity_gb: Optional[float],
+    leak_analysis: Optional[dict],
+    fragmentation: Optional[dict],
+) -> Optional[dict]:
+    """Assess OOM risk using a multi-factor scoring model.
+
+    Factors: memory utilization, leak trend, fragmentation level.
+    Returns risk assessment dict or None if insufficient data.
+    """
+    if peak_memory_mb is None:
+        return None
+
+    score = 0.0
+    factors: list[dict] = []
+
+    # Factor 1: Memory utilization
+    if hbm_capacity_gb and hbm_capacity_gb > 0:
+        capacity_mb = hbm_capacity_gb * 1024
+        utilization = peak_memory_mb / capacity_mb
+        if utilization > 0.95:
+            score += 40
+        elif utilization > 0.85:
+            score += 25
+        elif utilization > 0.70:
+            score += 10
+        factors.append({
+            "factor": "utilization",
+            "value": round(utilization, 4),
+            "description": f"Peak memory utilization: {utilization:.1%}",
+        })
+
+    # Factor 2: Memory leak
+    if leak_analysis and leak_analysis.get("leak_detected"):
+        leak_score = 30 if leak_analysis.get("confidence") == "high" else 15
+        score += leak_score
+        factors.append({
+            "factor": "memory_leak",
+            "value": leak_analysis["slope_mb_per_step"],
+            "description": f"Leak detected: {leak_analysis['slope_mb_per_step']:.4f} MB/step",
+        })
+
+    # Factor 3: Fragmentation
+    if fragmentation and fragmentation.get("fragmentation_level") != "low":
+        frag_score = 20 if fragmentation["fragmentation_level"] == "high" else 10
+        score += frag_score
+        factors.append({
+            "factor": "fragmentation",
+            "value": fragmentation["free_memory_cv"],
+            "description": f"Fragmentation CV: {fragmentation['free_memory_cv']:.4f}",
+        })
+
+    if not factors:
+        return None
+
+    # Classify risk level
+    if score >= 60:
+        risk_level = "critical"
+    elif score >= 35:
+        risk_level = "high"
+    elif score >= 15:
+        risk_level = "moderate"
+    else:
+        risk_level = "low"
+
+    return {
+        "oom_risk_level": risk_level,
+        "oom_risk_score": round(score, 1),
+        "factors": factors,
+    }
+
+
+def _oom_recommendations(oom_risk: Optional[dict]) -> list[str]:
+    """Generate recommendations based on OOM risk assessment."""
+    if not oom_risk:
+        return []
+
+    recommendations: list[str] = []
+    for factor in oom_risk.get("factors", []):
+        if factor["factor"] == "utilization" and factor["value"] > 0.85:
+            recommendations.append(
+                "Memory utilization is high — consider reducing batch_size or enabling gradient checkpointing"
+            )
+        if factor["factor"] == "memory_leak":
+            recommendations.append(
+                "Memory leak detected — investigate tensor lifecycle and ensure proper deallocation"
+            )
+        if factor["factor"] == "fragmentation":
+            recommendations.append(
+                "Memory fragmentation detected — consider setting max_split_size_mb and enabling expandable_segments"
+            )
+    return recommendations
 
 
 def default_paths(
@@ -106,6 +334,7 @@ def main() -> int:
     parser.add_argument("--memory-record-csv", help="explicit memory_record.csv path")
     parser.add_argument("--operator-memory-csv", help="explicit operator_memory.csv path")
     parser.add_argument("--module-memory-csv", help="explicit npu_module_mem.csv path")
+    parser.add_argument("--hardware", help="hardware model key (e.g., ascend_910b2) for HBM capacity lookup")
     parser.add_argument("--output-json", required=True, help="path to write the memory summary JSON")
     args = parser.parse_args()
 
@@ -119,18 +348,31 @@ def main() -> int:
         module_memory = module_memory or inferred_module_memory
 
     if not any(path and path.exists() for path in (memory_record, operator_memory, module_memory)):
-        raise SystemExit("No memory profiler files were found. Provide explicit memory CSV paths or a trace root.")
+        print("No memory profiler files were found. Provide explicit memory CSV paths or a trace root.", file=sys.stderr)
+        raise SystemExit(1)
 
-    record_rows = load_rows(memory_record) if memory_record and memory_record.exists() else []
-    operator_rows = load_rows(operator_memory) if operator_memory and operator_memory.exists() else []
-    module_rows = load_rows(module_memory) if module_memory and module_memory.exists() else []
+    record_rows = load_csv_rows(memory_record) if memory_record and memory_record.exists() else []
+    operator_rows = load_csv_rows(operator_memory) if operator_memory and operator_memory.exists() else []
+    module_rows = load_csv_rows(module_memory) if module_memory and module_memory.exists() else []
 
     peak_memory_mb, peak_source_field = summarize_peak_memory(record_rows or module_rows)
     top_operators = summarize_operator_memory(operator_rows)
     top_modules = summarize_operator_memory(module_rows)
 
+    # Enhanced analysis
+    leak_analysis = detect_memory_leak(record_rows)
+    fragmentation = calculate_fragmentation(record_rows)
+    hbm_capacity_gb = None
+    if args.hardware:
+        spec = HARDWARE_SPECS.get(args.hardware)
+        if spec:
+            hbm_capacity_gb = spec.get("hbm_capacity_gb")
+    oom_risk = assess_oom_risk(peak_memory_mb, hbm_capacity_gb, leak_analysis, fragmentation)
+
     pressure = "low"
-    if top_operators and top_operators[0]["share_percent"] >= 35:
+    if oom_risk and oom_risk["oom_risk_level"] in ("critical", "high"):
+        pressure = "high"
+    elif top_operators and top_operators[0]["share_percent"] >= 35:
         pressure = "high"
     elif peak_memory_mb is not None:
         pressure = "moderate"
@@ -146,6 +388,9 @@ def main() -> int:
         "memory_pressure": pressure,
         "top_operators": top_operators,
         "top_modules": top_modules,
+        "memory_leak": leak_analysis,
+        "fragmentation": fragmentation,
+        "oom_risk": oom_risk,
         "likely_domains": ["memory"] if peak_memory_mb is not None else [],
         "next_action": (
             "Validate peak memory, memory-heavy stage, and batch-size headroom after the first memory-focused change."
@@ -153,8 +398,17 @@ def main() -> int:
             else "Collect stronger memory evidence before choosing a memory optimization."
         ),
     }
+
+    oom_recs = _oom_recommendations(oom_risk)
+    if oom_recs:
+        report["oom_recommendations"] = oom_recs
+
     write_json(Path(args.output_json), report)
-    print(json.dumps({"peak_memory_mb": report["peak_memory_mb"], "pressure": report["memory_pressure"]}, indent=2))
+    print(json.dumps({
+        "peak_memory_mb": report["peak_memory_mb"],
+        "pressure": report["memory_pressure"],
+        "oom_risk": oom_risk["oom_risk_level"] if oom_risk else None,
+    }, indent=2))
     return 0
 
 

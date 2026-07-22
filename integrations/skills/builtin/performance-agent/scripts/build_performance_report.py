@@ -13,7 +13,7 @@ from perf_common import read_json, write_json, write_text
 
 
 def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
 def relative_to_out(path: Path, out_root: Path) -> str:
@@ -22,7 +22,14 @@ def relative_to_out(path: Path, out_root: Path) -> str:
 
 def copy_json_artifact(source: Optional[str], target: Path, fallback):
     if source:
-        payload = read_json(Path(source))
+        source_path = Path(source)
+        if source_path.exists():
+            try:
+                payload = read_json(source_path)
+            except Exception:
+                payload = fallback
+        else:
+            payload = fallback
     else:
         payload = fallback
     write_json(target, payload)
@@ -45,14 +52,23 @@ def copy_summary_artifacts(summary_refs: dict, summaries_root: Path) -> dict[str
 
 def build_env_payload() -> dict:
     git_commit = None
-    repo_root = Path(__file__).resolve().parents[3]
-    try:
-        git_commit = subprocess.check_output(
-            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
-            text=True,
-        ).strip()
-    except Exception:
-        git_commit = None
+    # Walk upward from this script to find the git repo root, rather than
+    # relying on a fixed number of parent hops that breaks when the file moves.
+    candidate = Path(__file__).resolve().parent
+    for _ in range(8):
+        if (candidate / ".git").exists():
+            try:
+                git_commit = subprocess.check_output(
+                    ["git", "-C", str(candidate), "rev-parse", "HEAD"],
+                    text=True,
+                    timeout=5,
+                ).strip()
+            except Exception:
+                pass
+            break
+        if candidate.parent == candidate:
+            break
+        candidate = candidate.parent
     return {
         "mindspore_version": None,
         "cann_version": None,
@@ -83,7 +99,22 @@ def map_verdict_status(
     primary_name: Optional[str],
     trace_root: Optional[str],
     profile_confidence: Optional[str],
+    available_artifacts: Optional[dict] = None,
+    data_quality: Optional[str] = None,
 ) -> tuple[str, str, str]:
+    """Determine verdict status based on available evidence.
+
+    Args:
+        validation: Validation results if available
+        primary_name: Name of primary bottleneck candidate
+        trace_root: Path to profiler export root
+        profile_confidence: Confidence level of profile
+        available_artifacts: Dict of available artifact flags
+        data_quality: Data quality level (excellent/good/fair/poor/critical)
+
+    Returns:
+        Tuple of (status, summary, next_action)
+    """
     if validation:
         overall = validation.get("overall_result")
         if overall == "improved":
@@ -98,28 +129,82 @@ def map_verdict_status(
                 "Validation exists, but the selected optimization is not yet a clear win.",
                 "Inspect the comparison and gather stronger or more targeted rerun evidence.",
             )
-    if not trace_root:
+
+    # Check critical artifacts availability (these matter more than profiler_info.json alone)
+    # Essential: step_summary and hotspot_summary are required for meaningful analysis
+    # Advanced: trace_view, communication_summary, memory_summary enhance but aren't blocking
+    essential_artifacts = {
+        "step_summary": True,  # step_trace_time.csv is essential for step analysis
+        "hotspot_summary": True,  # operator_details.csv is essential for hotspot analysis
+    }
+    advanced_artifacts = {
+        "trace_view": True,  # trace_view.json for timeline analysis
+        "communication_summary": True,  # communication analysis
+        "memory_summary": True,  # memory analysis
+        "input_summary": True,  # input pipeline analysis
+    }
+
+    has_essential = False
+    has_advanced = False
+    missing_essential = []
+    missing_advanced = []
+
+    if available_artifacts:
+        for artifact_name, is_essential in essential_artifacts.items():
+            if available_artifacts.get(artifact_name):
+                has_essential = True
+            else:
+                missing_essential.append(artifact_name)
+        for artifact_name, is_advanced in advanced_artifacts.items():
+            if available_artifacts.get(artifact_name):
+                has_advanced = True
+            else:
+                missing_advanced.append(artifact_name)
+
+    # If we have essential artifacts, we can generate report even without profiler_info.json
+    if has_essential or trace_root:
+        if primary_name and primary_name != "inconclusive":
+            return (
+                "BOTTLENECK_IDENTIFIED",
+                f"The dominant bottleneck candidate is {primary_name}.",
+                "Apply one targeted optimization and compare only the metrics tied to that bottleneck.",
+            )
+        if profile_confidence in {"strong", "moderate"}:
+            return (
+                "PROFILE_RECOVERED",
+                "Profiler outputs were recovered, and bottleneck analysis is complete.",
+                "Apply the recommended optimizations and validate with a new profiler run.",
+            )
+        if has_essential:
+            missing_parts = []
+            if missing_essential:
+                missing_parts.append(f"essential: {', '.join(missing_essential)}")
+            if missing_advanced:
+                missing_parts.append(f"advanced: {', '.join(missing_advanced)}")
+            missing_str = "; ".join(missing_parts) if missing_parts else "profiler_info.json"
+            return (
+                "PARTIAL_PROFILE",
+                "Analysis completed with available data. Some artifacts are missing but core analysis is valid.",
+                f"Recommendation: Ensure profiler.stop() is called properly next run. Missing: {missing_str}.",
+            )
         return (
             "TRACE_REQUIRED",
             "Profiler evidence is missing. The run context exists, but bottleneck classification is not yet trustworthy.",
             "Provide a profiler export root or collect the smallest high-signal trace files first.",
         )
-    if primary_name and primary_name != "inconclusive":
+
+    # No critical artifacts and no trace_root - truly insufficient data
+    if data_quality == "critical":
         return (
-            "BOTTLENECK_IDENTIFIED",
-            f"The dominant bottleneck candidate is {primary_name}.",
-            "Apply one targeted optimization and compare only the metrics tied to that bottleneck.",
+            "INSUFFICIENT_DATA",
+            "Critical data quality issues prevent reliable bottleneck analysis.",
+            "Check profiler.stop() was called, ensure profiler collection completed normally, and recollect data.",
         )
-    if profile_confidence in {"strong", "moderate"}:
-        return (
-            "PROFILE_RECOVERED",
-            "Profiler outputs were recovered, but the current evidence is still inconclusive.",
-            "Collect stronger step, communication, memory, or hotspot summaries before choosing the first optimization.",
-        )
+
     return (
         "TRACE_REQUIRED",
         "The current evidence is insufficient for a defensible bottleneck claim.",
-        "Collect a profiler export root and run the deterministic summary pipeline again.",
+        "Collect a profiler export root with step_trace_time.csv, trace_view.json, and operator_details.csv.",
     )
 
 
@@ -132,6 +217,8 @@ def build_verdict(
         primary.get("name"),
         profile.get("trace_root"),
         profile.get("confidence"),
+        available_artifacts=profile.get("available_artifacts"),
+        data_quality=profile.get("data_quality", {}).get("level"),
     )
     return {
         "schema_version": "performance-agent/0.1",
@@ -178,9 +265,11 @@ def build_shared_report(
     timestamp = now_iso()
     status_map = {
         "VALIDATED_IMPROVEMENT": "success",
-        "BOTTLENECK_IDENTIFIED": "partial",
-        "VALIDATION_PENDING": "partial",
+        "BOTTLENECK_IDENTIFIED": "success",
+        "PARTIAL_PROFILE": "partial",
         "PROFILE_RECOVERED": "partial",
+        "VALIDATION_PENDING": "partial",
+        "INSUFFICIENT_DATA": "failed",
         "TRACE_REQUIRED": "failed",
     }
     shared_status = status_map.get(verdict["status"], "failed")
@@ -224,7 +313,63 @@ def build_shared_report(
     return report
 
 
-def render_markdown(verdict: dict) -> str:
+def render_suggestions_md(suggestions: list[dict]) -> str:
+    """Render optimization suggestions as markdown."""
+    if not suggestions:
+        return ""
+
+    lines = ["## Optimization Suggestions", ""]
+
+    # Group by priority (case-insensitive)
+    def get_priority(s: dict) -> str:
+        return (s.get("priority") or "").lower()
+
+    high = [s for s in suggestions if get_priority(s) == "high"]
+    medium = [s for s in suggestions if get_priority(s) == "medium"]
+    low = [s for s in suggestions if get_priority(s) == "low"]
+
+    for label, group in [("HIGH Priority", high), ("MEDIUM Priority", medium), ("LOW Priority", low)]:
+        if not group:
+            continue
+        lines.append(f"### {label}")
+        lines.append("")
+        for s in group:
+            lines.append(f"#### {s.get('id', 'N/A')}: {s['title']}")
+            lines.append("")
+            lines.append(f"- **Expected Benefit**: {s.get('expected_benefit', 'N/A')}")
+            lines.append(f"- **Trigger**: {s.get('trigger_metric', 'N/A')}")
+            lines.append("")
+            if s.get("actions"):
+                lines.append("**Actions**:")
+                lines.append("")
+                for i, action in enumerate(s["actions"], 1):
+                    lines.append(f"{i}. {action}")
+                lines.append("")
+            if s.get("code_examples"):
+                lines.append("**Code Examples**:")
+                lines.append("")
+                for framework, code in s["code_examples"].items():
+                    lines.append(f"*{framework}*:")
+                    lines.append("```python")
+                    lines.append(code)
+                    lines.append("```")
+                    lines.append("")
+            if s.get("config_examples"):
+                lines.append("**Config Examples**:")
+                lines.append("")
+                for framework, config in s["config_examples"].items():
+                    lines.append(f"*{framework}*:")
+                    lines.append("```")
+                    lines.append(config)
+                    lines.append("```")
+                    lines.append("")
+            lines.append(f"**Validation**: compare {', '.join(s.get('validation_metrics', []))}")
+            lines.append("")
+
+    return "\n".join(lines)
+
+
+def render_markdown(verdict: dict, suggestions: Optional[list[dict]] = None) -> str:
     lines = [
         "# Performance Report",
         "",
@@ -256,6 +401,12 @@ def render_markdown(verdict: dict) -> str:
             lines.append(f"- {metric['metric']}: {metric['before']} -> {metric['after']} ({metric['outcome']})")
     else:
         lines.append("- validation is pending")
+
+    # Insert optimization suggestions between Verify and Artifacts
+    if suggestions:
+        lines.append("")
+        lines.extend(render_suggestions_md(suggestions).split("\n"))
+
     lines.extend(
         [
             "",
@@ -296,6 +447,7 @@ def main() -> int:
     parser.add_argument("--output-verdict-json", help="optional path for performance verdict JSON")
     parser.add_argument("--locate-json", help="optional locator JSON path")
     parser.add_argument("--validation-json", help="optional validation comparison JSON path")
+    parser.add_argument("--suggestions-json", help="optional optimization suggestions JSON path")
     parser.add_argument("--working-dir", default=".", help="workspace root")
     parser.add_argument("--user-problem", default="", help="user problem summary")
     args = parser.parse_args()
@@ -304,6 +456,7 @@ def main() -> int:
     bottlenecks = read_json(Path(args.bottlenecks_json))
     locate = read_json(Path(args.locate_json)) if args.locate_json else {"selected_root": profile.get("trace_root")}
     validation = read_json(Path(args.validation_json)) if args.validation_json else None
+    suggestions = read_json(Path(args.suggestions_json)) if args.suggestions_json else None
 
     output_json = Path(args.output_json).resolve()
     output_md = Path(args.output_md).resolve()
@@ -334,6 +487,9 @@ def main() -> int:
     verdict = build_verdict(copied_locator, copied_profile, copied_bottlenecks, copied_validation)
     verdict["sources"]["locator_ref"] = str(locator_copy)
     verdict["sources"]["summary_artifacts"] = copied_summaries
+    if suggestions:
+        verdict["optimization_suggestions"] = suggestions.get("suggestions", [])
+        verdict["suggestion_summary"] = suggestions.get("suggestion_summary", {})
 
     extra_artifacts: list[Path] = [locator_copy]
     extra_artifacts.extend(Path(path) for path in copied_summaries.values())
@@ -367,7 +523,12 @@ def main() -> int:
         },
     )
     write_json(output_json, shared_report)
-    write_text(output_md, render_markdown(verdict))
+
+    # Render markdown with suggestions passed directly to render function
+    suggestions_list = verdict.get("optimization_suggestions", [])
+    final_md = render_markdown(verdict, suggestions=suggestions_list)
+
+    write_text(output_md, final_md)
     print(json.dumps({"status": verdict["status"], "run_id": run_id}, indent=2))
     return 0
 

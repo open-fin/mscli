@@ -2,6 +2,30 @@
 
 Read this file after choosing a bottleneck and one targeted optimization.
 
+## Prerequisites
+
+Every bottleneck claim should carry:
+
+- confidence level
+- supporting evidence
+- a validation check
+- one first optimization direction
+
+Typical bottleneck groups to validate across:
+
+- compute bottleneck
+- dataloader or input pipeline bottleneck
+- communication bottleneck
+- memory bottleneck
+- host or framework overhead
+- operator hotspot
+- low MFU
+- cluster rank imbalance
+- performance jitter
+
+For diagnosis approach per bottleneck branch, see [bottleneck-signatures.md](bottleneck-signatures.md).
+For concrete optimization actions, see [optimization-knowledge-base.md](optimization-knowledge-base.md).
+
 ## Principle
 
 Validate the change against the same bottleneck evidence that motivated it.

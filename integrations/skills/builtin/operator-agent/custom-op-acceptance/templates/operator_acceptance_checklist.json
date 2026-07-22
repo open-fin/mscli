@@ -1,0 +1,347 @@
+{
+  "source_workbook": "算子测试CheckList.xlsx",
+  "source_note": "Original workbook name only; runtime users should use the extracted templates in this directory.",
+  "source_sheet": "算子验收checklist",
+  "title": "自定义算子转测验收CheckList",
+  "transfer_rules": [
+    "1. 只需要支持Pynative模式",
+    "2. 不要求所有CheckList项都能pass，允许带遗留问题转测，以Demo形式发布，接口文档里需要描述清楚不支持的场景。",
+    "3. 建议通过自定义算子自测Skill进行自验，输出验收报告用于发布评审。",
+    "4. 经过验收评审后，方可对外发布。"
+  ],
+  "source_example": [
+    "1. 要验收的算子:    mindspore.ops.custom.cat",
+    "2. 算子pr链接：https://gitee.com/mindspore/mindspore/issues/ICX081",
+    "3. 对比标杆版本： torch 2.7.1",
+    "4. 对比标杆算子的名称：torch_npu.ops.custom.npu_cat"
+  ],
+  "allowed_results": [
+    "是",
+    "否",
+    "不涉及",
+    "需人工确认",
+    "非阻塞备注"
+  ],
+  "columns": [
+    "自测内容",
+    "自测结果",
+    "备注"
+  ],
+  "sections": [
+    {
+      "name": "资料验证",
+      "items": [
+        {
+          "item": "新增接口列表",
+          "source_example_result": "",
+          "guidance": "给出具体的接口名称，如ops.abs、Tensor.abs等"
+        },
+        {
+          "item": "提供典型场景的ut/st用例",
+          "source_example_result": "否",
+          "guidance": "不能为“否”"
+        },
+        {
+          "item": "接口是否提供中文rst并与英文注释对应",
+          "source_example_result": "否",
+          "guidance": "不能为“否”"
+        },
+        {
+          "item": "接口描述是否详细准确:",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        },
+        {
+          "item": "与torch_npu的接口是否一致",
+          "source_example_result": "不涉及",
+          "guidance": "不一致时说明原因，并给出基础场景测试、API映射、CCB/接口设计评审证据。"
+        },
+        {
+          "item": "文档summary部分是否有提供公式:",
+          "source_example_result": "否",
+          "guidance": "标杆无公式"
+        },
+        {
+          "item": "属性描述是否完整正确",
+          "source_example_result": "是",
+          "guidance": "自测结果为“否“时， 请说明详细原因\n自测结果为“不涉及”时，请简要说明原因"
+        },
+        {
+          "item": "input描述是否完整正确",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因\n自测结果为“不涉及”时，请简要说明原因"
+        },
+        {
+          "item": "输出描述是否完整正确",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        },
+        {
+          "item": "输出尺寸和input是否一样:",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否”时， 对外资料中需给出输出shape计算公式"
+        },
+        {
+          "item": "Raises项描述完整正确",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因\n自测结果为“不涉及”时，请简要说明原因"
+        },
+        {
+          "item": "支持的平台都有填写：",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因\n自测结果为“不涉及”时，请简要说明原因"
+        },
+        {
+          "item": "资料格式（包括样例格式）检查是否ok：",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        },
+        {
+          "item": "样例是否有提供：",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        },
+        {
+          "item": "样例是否有打印结果:",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        },
+        {
+          "item": "样例执行情况是否ok:",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因。请附上运行结果截图。"
+        }
+      ]
+    },
+    {
+      "name": "功能验证",
+      "items": [
+        {
+          "item": "默认参数场景是否验证",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        },
+        {
+          "item": "空Tensor输入的正反向是否验证",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        },
+        {
+          "item": "inf和nan是否验证",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        },
+        {
+          "item": "算子支持数据类型是否与标杆对齐（pytorch npu/gpu/cpu）",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        },
+        {
+          "item": "输入取值范围是否有验证",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        },
+        {
+          "item": "输入维度是否按算子 shape 规则覆盖关键维度/axis/broadcast/边界/真实模型/非法 shape",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        },
+        {
+          "item": "输入支持的dtype是否全覆盖，是否支持bfloat16",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        },
+        {
+          "item": "输入是否支持隐式类型转换？",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因（给出2个隐式类型转换的用例，例如：（float16-->float32）和（int16-->int32））"
+        },
+        {
+          "item": "输入是否支持广播",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        },
+        {
+          "item": "输入之间的约束是否有验证",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        },
+        {
+          "item": "反向是否支持",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        },
+        {
+          "item": "反向是否是单算子实现",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        },
+        {
+          "item": "正反向的精度用例是否提供且pass",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        },
+        {
+          "item": "异常用例是否校验具体报错信息",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        },
+        {
+          "item": "是否提供报错白名单",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        },
+        {
+          "item": "是否提供functional用例",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因（全新算子或者functional和primitive不一致时需提供functional用例）"
+        },
+        {
+          "item": "动态shape/rank/属性是否都支持",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        },
+        {
+          "item": "是否关闭退避功能验证 export MS_DISABLE_KERNEL_BACKOFF=1",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        },
+        {
+          "item": "测试仓相关的存量接口用例是否全部可以PASS，有无遗留问题单",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        },
+        {
+          "item": "多输入算子的bprop函数是否有考虑反向按需求导",
+          "source_example_result": "否",
+          "guidance": "说明是否按需导；需展示反向按需求导规则证据。"
+        },
+        {
+          "item": "算子输出shape是否依赖于算子的计算结果",
+          "source_example_result": "否",
+          "guidance": "自测结果为“是“时， 需要手动进行内存释放。详见：https://gitee.com/mindspore/mindspore/pulls/77851"
+        },
+        {
+          "item": "是否支持非连续输入支持情况",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        },
+        {
+          "item": "正反向是否与torch_npu计算结果0偏差（请将MD5对比截图贴于右侧）",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        },
+        {
+          "item": "若多Tensor输入，是否支持各Tensor数据类型不一致",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        }
+      ]
+    },
+    {
+      "name": "性能验证",
+      "items": [
+        {
+          "item": "性能是否验证广播场景",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因"
+        },
+        {
+          "item": "是否考虑到反向显存优化，未用到的输入是否添加到了SetUnusedInputs中（串讲时需展示代码）",
+          "source_example_result": "否",
+          "guidance": "反向未用输入需说明 SetUnusedInputs 处理，并展示代码证据。"
+        },
+        {
+          "item": "性能测试是否覆盖不同规格的数据（3种以上），且算子性能不低于友商，允许波动范围10%（CPU和GPU3090平台及以上）",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因（不验收隐式类型转换场景的性能）"
+        },
+        {
+          "item": "显存是否持平PTA（请将截图贴于右侧）",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时， 请说明详细原因。教程详见：https://3ms.huawei.com/km/blogs/details/18309366"
+        }
+      ]
+    },
+    {
+      "name": "算子自测",
+      "items": [
+        {
+          "item": "是否自测无遗留问题",
+          "source_example_result": "否",
+          "guidance": "自测结果为“否“时，需在算子文档的warning区域里详细描述不支持的场景。"
+        }
+      ]
+    },
+    {
+      "name": "安全编码检视",
+      "items": [
+        {
+          "item": "指针是否未判空",
+          "source_example_result": "否",
+          "guidance": "Infer中的Primitive、输入输出、GetShape、GetType、GetValue不需要判空外，其他情况需要判空"
+        },
+        {
+          "item": "指针是否先使用后校验",
+          "source_example_result": "否",
+          "guidance": ""
+        },
+        {
+          "item": "数组、指针是否访存越界",
+          "source_example_result": "否",
+          "guidance": "Infer和接口适配层的输入输出Vector不需要校验个数"
+        },
+        {
+          "item": "是否存在除零",
+          "source_example_result": "否",
+          "guidance": ""
+        },
+        {
+          "item": "是否存在内存泄露（new/mallco内存未释放",
+          "source_example_result": "否",
+          "guidance": ""
+        },
+        {
+          "item": "是否存在异常、错误处理分支未对内存、文件句柄等资源释放",
+          "source_example_result": "否",
+          "guidance": ""
+        },
+        {
+          "item": "是否存在‘使用new创建对象未声明为nothrow",
+          "source_example_result": "否",
+          "guidance": ""
+        },
+        {
+          "item": "是否未使用安全函数库进行内存操作",
+          "source_example_result": "否",
+          "guidance": "memcpy 等内存操作需使用安全函数库，如 memcpy_s，并说明检查结果。"
+        },
+        {
+          "item": "是否存在数据类型转换导致数值移除（上溢或下溢）",
+          "source_example_result": "否",
+          "guidance": ""
+        },
+        {
+          "item": "是否存在冗余代码（冗余校验、不可达代码等）",
+          "source_example_result": "否",
+          "guidance": ""
+        },
+        {
+          "item": "是否存在暴露敏感信息",
+          "source_example_result": "否",
+          "guidance": "敏感信息包括：ip地址、口令、密钥"
+        },
+        {
+          "item": "是否使用了弱随机数生成器",
+          "source_example_result": "否",
+          "guidance": ""
+        },
+        {
+          "item": "是否将敏感信息硬编码",
+          "source_example_result": "否",
+          "guidance": ""
+        }
+      ]
+    }
+  ]
+}

@@ -30,13 +30,14 @@ def build_brief(summary: dict, top_k: int) -> dict:
     priority = []
     for idx, item in enumerate(top_ops, 1):
         category = item.get("category", "computation_or_other")
+        share = float(item.get("share_percent", 0))
         priority.append(
             {
                 "rank": idx,
                 "operator": item["operator"],
-                "share_percent": item["share_percent"],
+                "share_percent": share,
                 "category": category,
-                "why_priority": f"{item['operator']} currently takes {item['share_percent']}% of the measured time and should be handled before lower-share operators.",
+                "why_priority": f"{item['operator']} currently takes {share}% of the measured time and should be handled before lower-share operators.",
                 "first_optimization_direction": default_direction(category),
                 "rerun_metrics": default_rerun_metrics(category),
             }
@@ -96,8 +97,13 @@ def main() -> int:
     output_json = Path(args.output_json)
     output_md = Path(args.output_md)
 
+    if not input_json.exists():
+        print(f"Input file not found: {input_json}", file=sys.stderr)
+        raise SystemExit(1)
+
     summary = json.loads(input_json.read_text(encoding="utf-8"))
     brief = build_brief(summary, args.top_k)
+    output_json.parent.mkdir(parents=True, exist_ok=True)
     output_json.write_text(json.dumps(brief, indent=2, ensure_ascii=False), encoding="utf-8")
     output_md.write_text(render_markdown(brief), encoding="utf-8")
     print(json.dumps({"primary_focus": brief["primary_focus"], "top_k": len(brief["priority_queue"])}, ensure_ascii=False, indent=2))

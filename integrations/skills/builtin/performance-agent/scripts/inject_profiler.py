@@ -187,11 +187,14 @@ class LoopCollector(ast.NodeVisitor):
         )
 
 
-def build_profile_expr(stack: str, trace_dir: str, use_step_schedule: bool) -> ast.expr:
+def build_profile_expr(stack: str, trace_dir: str, use_step_schedule: bool, with_stack: bool = False) -> ast.expr:
     keyword_parts = [
         "activities=[ProfilerActivity.CPU, ProfilerActivity.NPU]",
         "on_trace_ready=tensorboard_trace_handler({})".format(repr(trace_dir)),
     ]
+    if with_stack:
+        keyword_parts.append("with_stack=True")
+        keyword_parts.append("with_modules=True")
     if use_step_schedule:
         keyword_parts.append(
             "schedule=schedule(wait=0, warmup=0, active=1, repeat=1, skip_first={})".format(
@@ -206,11 +209,11 @@ def build_prof_step_stmt() -> ast.stmt:
     return ast.parse("prof.step()").body[0]
 
 
-def build_with_stmt(stack: str, trace_dir: str, body: List[ast.stmt], use_step_schedule: bool) -> ast.With:
+def build_with_stmt(stack: str, trace_dir: str, body: List[ast.stmt], use_step_schedule: bool, with_stack: bool = False) -> ast.With:
     with_node = ast.With(
         items=[
             ast.withitem(
-                context_expr=build_profile_expr(stack, trace_dir, use_step_schedule),
+                context_expr=build_profile_expr(stack, trace_dir, use_step_schedule, with_stack),
                 optional_vars=ast.Name(id="prof", ctx=ast.Store()),
             )
         ],
@@ -221,10 +224,11 @@ def build_with_stmt(stack: str, trace_dir: str, body: List[ast.stmt], use_step_s
 
 
 class LoopInjector(ast.NodeTransformer):
-    def __init__(self, stack: str, trace_dir: str, target_node_id: int) -> None:
+    def __init__(self, stack: str, trace_dir: str, target_node_id: int, with_stack: bool = False) -> None:
         self.stack = stack
         self.trace_dir = trace_dir
         self.target_node_id = target_node_id
+        self.with_stack = with_stack
         self.applied = False
 
     def visit_For(self, node: ast.For):  # type: ignore[override]
@@ -242,23 +246,24 @@ class LoopInjector(ast.NodeTransformer):
     def _wrap_loop(self, node):
         loop_node = copy.deepcopy(node)
         loop_node.body = list(loop_node.body) + [build_prof_step_stmt()]
-        with_node = build_with_stmt(self.stack, self.trace_dir, [loop_node], use_step_schedule=True)
+        with_node = build_with_stmt(self.stack, self.trace_dir, [loop_node], use_step_schedule=True, with_stack=self.with_stack)
         self.applied = True
         return ast.copy_location(with_node, node)
 
 
 class MainGuardWrapper(ast.NodeTransformer):
-    def __init__(self, stack: str, trace_dir: str, target_if_id: int) -> None:
+    def __init__(self, stack: str, trace_dir: str, target_if_id: int, with_stack: bool = False) -> None:
         self.stack = stack
         self.trace_dir = trace_dir
         self.target_if_id = target_if_id
+        self.with_stack = with_stack
         self.applied = False
 
     def visit_If(self, node: ast.If):  # type: ignore[override]
         node = self.generic_visit(node)
         if id(node) != self.target_if_id:
             return node
-        node.body = [build_with_stmt(self.stack, self.trace_dir, list(node.body), use_step_schedule=False)]
+        node.body = [build_with_stmt(self.stack, self.trace_dir, list(node.body), use_step_schedule=False, with_stack=self.with_stack)]
         self.applied = True
         return node
 
@@ -274,7 +279,7 @@ def insert_imports(module: ast.Module, import_snippet: str) -> None:
     module.body[insert_at:insert_at] = import_nodes
 
 
-def wrap_module_executable_tail(module: ast.Module, stack: str, trace_dir: str) -> bool:
+def wrap_module_executable_tail(module: ast.Module, stack: str, trace_dir: str, with_stack: bool = False) -> bool:
     first_exec = None
     for idx, node in enumerate(module.body):
         if idx == 0 and isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
@@ -288,12 +293,12 @@ def wrap_module_executable_tail(module: ast.Module, stack: str, trace_dir: str) 
         return False
     executable_tail = list(module.body[first_exec:])
     module.body = list(module.body[:first_exec]) + [
-        build_with_stmt(stack, trace_dir, executable_tail, use_step_schedule=False)
+        build_with_stmt(stack, trace_dir, executable_tail, use_step_schedule=False, with_stack=with_stack)
     ]
     return True
 
 
-def instrument_source(stack: str, source: str, trace_dir: str) -> dict:
+def instrument_source(stack: str, source: str, trace_dir: str, with_stack: bool = False) -> dict:
     if has_existing_profiler_hooks(source):
         raise InjectionError("Profiler hooks already exist in the script. Refusing to inject duplicates.")
 
@@ -309,7 +314,7 @@ def instrument_source(stack: str, source: str, trace_dir: str) -> dict:
     if collector.candidates:
         selected_candidate = max(collector.candidates, key=lambda item: item.score)
         if selected_candidate.score >= 30:
-            loop_injector = LoopInjector(stack, trace_dir, selected_candidate.node_id)
+            loop_injector = LoopInjector(stack, trace_dir, selected_candidate.node_id, with_stack)
             tree = loop_injector.visit(tree)
             tree = ast.fix_missing_locations(tree)
             if loop_injector.applied:
@@ -321,7 +326,7 @@ def instrument_source(stack: str, source: str, trace_dir: str) -> dict:
                 }
 
     if mode is None and collector.main_guard_ids:
-        wrapper = MainGuardWrapper(stack, trace_dir, collector.main_guard_ids[0])
+        wrapper = MainGuardWrapper(stack, trace_dir, collector.main_guard_ids[0], with_stack)
         tree = wrapper.visit(tree)
         tree = ast.fix_missing_locations(tree)
         if wrapper.applied:
@@ -329,7 +334,7 @@ def instrument_source(stack: str, source: str, trace_dir: str) -> dict:
             target = {"main_guard": True}
 
     if mode is None:
-        if wrap_module_executable_tail(tree, stack, trace_dir):
+        if wrap_module_executable_tail(tree, stack, trace_dir, with_stack):
             tree = ast.fix_missing_locations(tree)
             mode = "module_context"
             target = {"main_guard": False}
@@ -342,6 +347,7 @@ def instrument_source(stack: str, source: str, trace_dir: str) -> dict:
         "instrumented_source": instrumented,
         "mode": mode,
         "trace_dir": trace_dir,
+        "with_stack": with_stack,
         "target": target,
         "candidate_count": len(collector.candidates),
         "selected_candidate_score": selected_candidate.score if selected_candidate else None,
@@ -354,6 +360,7 @@ def main() -> int:
     parser.add_argument("--input-script", required=True, help="source script path")
     parser.add_argument("--output-script", required=True, help="output copied script path")
     parser.add_argument("--trace-dir", required=True, help="profiler trace directory")
+    parser.add_argument("--with-stack", action="store_true", help="enable with_stack=True and with_modules=True in profiler")
     parser.add_argument("--metadata-json", help="optional metadata JSON path")
     args = parser.parse_args()
 
@@ -362,7 +369,7 @@ def main() -> int:
     trace_dir = str(Path(args.trace_dir).resolve())
 
     source = input_path.read_text(encoding="utf-8")
-    result = instrument_source(args.stack, source, trace_dir)
+    result = instrument_source(args.stack, source, trace_dir, with_stack=args.with_stack)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(result["instrumented_source"], encoding="utf-8")
 
@@ -371,6 +378,7 @@ def main() -> int:
         "source_script": str(input_path),
         "output_script": str(output_path),
         "trace_dir": trace_dir,
+        "with_stack": args.with_stack,
         "mode": result["mode"],
         "target": result["target"],
         "candidate_count": result["candidate_count"],

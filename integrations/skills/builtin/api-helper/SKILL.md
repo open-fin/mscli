@@ -5,7 +5,7 @@ description: Auto-invoked when users ask mindspore api questions. such as mint.*
 
 # API Helper
 
-This skill helps you understand MindSpore's API call chain and basic knowledage.
+This skill helps you understand MindSpore's API call chain and basic knowledge.
 
 ## When to Use
 
