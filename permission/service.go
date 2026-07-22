@@ -333,8 +333,8 @@ func (s *DefaultPermissionService) Request(ctx context.Context, tool, action, pa
 			return granted, nil
 		}
 
-		// No UI, default to allow
-		return true, nil
+		// PermissionAsk must fail closed when no interactive approval is available.
+		return false, nil
 	}
 
 	return false, fmt.Errorf("unknown permission level")

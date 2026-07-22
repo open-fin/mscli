@@ -45,6 +45,20 @@ func (s *preloadStore) SaveDecision(decision PermissionDecision) error { return 
 func (s *preloadStore) LoadDecisions() ([]PermissionDecision, error)   { return s.decisions, nil }
 func (s *preloadStore) ClearDecisions() error                          { return nil }
 
+func TestRequestAskWithoutUIDenies(t *testing.T) {
+	svc := NewDefaultPermissionService(configs.PermissionsConfig{
+		DefaultLevel: "ask",
+	})
+
+	granted, err := svc.Request(context.Background(), "shell", "rm -rf /tmp/example", "")
+	if err != nil {
+		t.Fatalf("Request() err = %v", err)
+	}
+	if granted {
+		t.Fatal("Request() granted = true, want false without a permission UI")
+	}
+}
+
 func TestRequestRemember_EditScopesToSessionAndNotPersisted(t *testing.T) {
 	svc := NewDefaultPermissionService(configs.PermissionsConfig{
 		DefaultLevel: "ask",
