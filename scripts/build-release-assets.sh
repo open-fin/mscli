@@ -55,7 +55,7 @@ for platform in "${PLATFORMS[@]}"; do
   fi
   ASSETS+=("${output}")
   echo "  -> ${output}"
-  GOOS="${GOOS}" GOARCH="${GOARCH}" go build \
+  CGO_ENABLED=0 GOOS="${GOOS}" GOARCH="${GOARCH}" go build \
     -ldflags "-X ${MODULE_PATH}/internal/version.Version=${VERSION}" \
     -o "${DIST_DIR}/${output}" \
     ./cmd/mscli/
