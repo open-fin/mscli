@@ -14,6 +14,7 @@ require (
 	github.com/rivo/uniseg v0.4.7
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.29.10 // Factory pack build/load must work with CGO disabled; go-sqlite3 requires CGO.
+	mvdan.cc/sh/v3 v3.12.0
 )
 
 require (

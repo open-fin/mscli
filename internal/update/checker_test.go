@@ -2,9 +2,9 @@ package update
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"runtime"
 	"testing"
 )
 
@@ -75,9 +75,10 @@ func TestCompareSemverPrereleaseOrdering(t *testing.T) {
 }
 
 func TestCheckDetectsPrereleaseUpdate(t *testing.T) {
+	checksum := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	success := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"latest":"0.5.0-beta.3","min_allowed":"","download_base":"http://mirror.example/mscli/releases"}`))
+		_, _ = fmt.Fprintf(w, `{"latest":"0.5.0-beta.3","min_allowed":"","download_base":"https://mirror.example/mscli/releases","checksums":{"%s":"%s"}}`, binaryAssetName(), checksum)
 	}))
 	defer success.Close()
 
@@ -96,7 +97,23 @@ func TestCheckDetectsPrereleaseUpdate(t *testing.T) {
 	if result.LatestVersion != "0.5.0-beta.3" {
 		t.Fatalf("Check() LatestVersion = %q", result.LatestVersion)
 	}
-	if result.DownloadURL != "http://mirror.example/mscli/releases/v0.5.0-beta.3/mscli-"+runtime.GOOS+"-"+runtime.GOARCH {
+	if result.DownloadURL != "https://mirror.example/mscli/releases/v0.5.0-beta.3/"+binaryAssetName() {
 		t.Fatalf("Check() DownloadURL = %q", result.DownloadURL)
+	}
+	if result.SHA256 != checksum {
+		t.Fatalf("Check() SHA256 = %q, want %q", result.SHA256, checksum)
+	}
+}
+
+func TestCheckRejectsUpdateWithoutPlatformChecksum(t *testing.T) {
+	success := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"latest":"1.0.0","download_base":"https://mirror.example/mscli/releases","checksums":{}}`))
+	}))
+	defer success.Close()
+
+	t.Setenv("MSCLI_MANIFEST_URL", success.URL)
+	if _, err := Check(context.Background(), "0.9.0"); err == nil {
+		t.Fatal("Check() error = nil, want missing checksum error")
 	}
 }

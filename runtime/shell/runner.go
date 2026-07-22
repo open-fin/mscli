@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"mvdan.cc/sh/v3/syntax"
 )
 
 // Config holds the shell runner configuration.
@@ -253,29 +255,180 @@ func (r *Runner) IsDangerous(command string) bool {
 
 // checkAllowed checks if a command is allowed.
 func (r *Runner) checkAllowed(command string) string {
-	cmd := strings.TrimSpace(command)
-	lower := strings.ToLower(cmd)
-
-	for _, blocked := range r.config.BlockedCmds {
-		if strings.Contains(lower, strings.ToLower(blocked)) {
-			return fmt.Sprintf("matches blocked pattern: %s", blocked)
-		}
+	if len(r.config.BlockedCmds) == 0 && len(r.config.AllowedCmds) == 0 {
+		return ""
 	}
 
-	if len(r.config.AllowedCmds) > 0 {
-		allowed := false
-		for _, allowedCmd := range r.config.AllowedCmds {
-			if strings.HasPrefix(lower, strings.ToLower(allowedCmd)) {
-				allowed = true
-				break
+	blocked, err := parseCommandPatterns(r.config.BlockedCmds)
+	if err != nil {
+		return fmt.Sprintf("invalid blocked command pattern: %v", err)
+	}
+	allowed, err := parseCommandPatterns(r.config.AllowedCmds)
+	if err != nil {
+		return fmt.Sprintf("invalid allowed command pattern: %v", err)
+	}
+
+	file, err := syntax.NewParser(syntax.Variant(syntax.LangPOSIX)).Parse(strings.NewReader(command), "")
+	if err != nil {
+		return fmt.Sprintf("cannot parse shell command: %v", err)
+	}
+
+	reason := ""
+	syntax.Walk(file, func(node syntax.Node) bool {
+		if reason != "" {
+			return false
+		}
+		call, ok := node.(*syntax.CallExpr)
+		if !ok || len(call.Args) == 0 {
+			return true
+		}
+
+		argv, ok := staticCommandArgs(call.Args)
+		if !ok {
+			reason = "contains dynamic shell expansion"
+			return false
+		}
+		if len(blocked) > 0 && obscuresNestedCommand(argv) {
+			reason = fmt.Sprintf("command %q can execute an uninspectable nested command", argv[0])
+			return false
+		}
+		for i, pattern := range blocked {
+			if commandPatternMatches(pattern, argv) {
+				reason = fmt.Sprintf("matches blocked pattern: %s", r.config.BlockedCmds[i])
+				return false
 			}
 		}
-		if !allowed {
-			return "not in allowed commands list"
+		if len(allowed) > 0 {
+			for _, pattern := range allowed {
+				if commandPatternMatches(pattern, argv) {
+					return true
+				}
+			}
+			reason = fmt.Sprintf("command %q is not in allowed commands list", argv[0])
+			return false
+		}
+		return true
+	})
+	return reason
+}
+
+func parseCommandPatterns(rawPatterns []string) ([][]string, error) {
+	patterns := make([][]string, 0, len(rawPatterns))
+	for _, raw := range rawPatterns {
+		file, err := syntax.NewParser(syntax.Variant(syntax.LangPOSIX)).Parse(strings.NewReader(raw), "")
+		if err != nil {
+			return nil, fmt.Errorf("%q: %w", raw, err)
+		}
+
+		var calls [][]string
+		valid := true
+		syntax.Walk(file, func(node syntax.Node) bool {
+			call, ok := node.(*syntax.CallExpr)
+			if !ok {
+				return true
+			}
+			if len(call.Assigns) > 0 || len(call.Args) == 0 {
+				valid = false
+				return false
+			}
+			argv, static := staticCommandArgs(call.Args)
+			if !static {
+				valid = false
+				return false
+			}
+			calls = append(calls, argv)
+			return false
+		})
+		if !valid || len(calls) != 1 {
+			return nil, fmt.Errorf("%q must be one static command", raw)
+		}
+		patterns = append(patterns, calls[0])
+	}
+	return patterns, nil
+}
+
+func staticCommandArgs(words []*syntax.Word) ([]string, bool) {
+	args := make([]string, 0, len(words))
+	for _, word := range words {
+		value, ok := staticWordParts(word.Parts, false)
+		if !ok {
+			return nil, false
+		}
+		args = append(args, value)
+	}
+	if len(args) > 0 {
+		args[0] = normalizeCommandName(args[0])
+	}
+	return args, true
+}
+
+func staticWordParts(parts []syntax.WordPart, quoted bool) (string, bool) {
+	var value strings.Builder
+	for _, part := range parts {
+		switch part := part.(type) {
+		case *syntax.Lit:
+			if !quoted && strings.ContainsAny(part.Value, "*?[") {
+				return "", false
+			}
+			value.WriteString(part.Value)
+		case *syntax.SglQuoted:
+			value.WriteString(part.Value)
+		case *syntax.DblQuoted:
+			nested, ok := staticWordParts(part.Parts, true)
+			if !ok {
+				return "", false
+			}
+			value.WriteString(nested)
+		default:
+			return "", false
 		}
 	}
+	result := value.String()
+	if !quoted && strings.HasPrefix(result, "~") {
+		return "", false
+	}
+	return result, true
+}
 
-	return ""
+func normalizeCommandName(command string) string {
+	command = strings.ToLower(strings.TrimSpace(command))
+	if strings.Contains(command, "/") {
+		command = filepath.Base(command)
+	}
+	return command
+}
+
+func commandPatternMatches(pattern, command []string) bool {
+	if len(pattern) == 0 || len(pattern) > len(command) {
+		return false
+	}
+	for i := range pattern {
+		if !strings.EqualFold(pattern[i], command[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func obscuresNestedCommand(argv []string) bool {
+	if len(argv) == 0 {
+		return false
+	}
+	switch argv[0] {
+	case ".", "source", "eval", "sh", "bash", "dash", "ash", "zsh", "ksh",
+		"busybox", "command", "builtin", "exec", "env", "nohup", "nice", "timeout",
+		"stdbuf", "sudo", "doas", "xargs", "parallel", "python", "python3", "node",
+		"perl", "ruby", "php", "lua", "awk":
+		return true
+	case "find":
+		for _, arg := range argv[1:] {
+			switch strings.ToLower(arg) {
+			case "-exec", "-execdir", "-ok", "-okdir":
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // RequiresConfirm checks if a command requires user confirmation.

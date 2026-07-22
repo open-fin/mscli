@@ -119,6 +119,71 @@ func TestRunnerRunStream_ReportsStdoutAndStderrTruncation(t *testing.T) {
 	}
 }
 
+func TestCheckAllowedUsesParsedShellCommands(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  Config
+		command string
+		allowed bool
+	}{
+		{
+			name:    "quoted blocked command",
+			config:  Config{BlockedCmds: []string{"rm"}},
+			command: `"r""m" -rf /tmp/example`,
+		},
+		{
+			name:    "variable command",
+			config:  Config{BlockedCmds: []string{"rm"}},
+			command: `cmd=rm; "$cmd" -rf /tmp/example`,
+		},
+		{
+			name:    "eval wrapper",
+			config:  Config{BlockedCmds: []string{"rm"}},
+			command: `eval "rm -rf /tmp/example"`,
+		},
+		{
+			name:    "encoded command piped to shell",
+			config:  Config{BlockedCmds: []string{"rm"}},
+			command: `printf cm0gLXJmIC90bXAvZXhhbXBsZQ== | base64 -d | sh`,
+		},
+		{
+			name:    "allowlist checks every pipeline command",
+			config:  Config{AllowedCmds: []string{"printf"}},
+			command: `printf hello | sh`,
+		},
+		{
+			name:    "allowlist uses argument boundaries",
+			config:  Config{AllowedCmds: []string{"git status"}},
+			command: `git statusx`,
+		},
+		{
+			name:    "allowed static command with more arguments",
+			config:  Config{AllowedCmds: []string{"git status"}},
+			command: `git status --short`,
+			allowed: true,
+		},
+		{
+			name:    "blocked word as inert argument",
+			config:  Config{BlockedCmds: []string{"rm"}},
+			command: `echo rm`,
+			allowed: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := NewRunner(tt.config)
+			reason := runner.checkAllowed(tt.command)
+			if tt.allowed && reason != "" {
+				t.Fatalf("checkAllowed(%q) = %q, want allowed", tt.command, reason)
+			}
+			if !tt.allowed && reason == "" {
+				t.Fatalf("checkAllowed(%q) allowed, want denied", tt.command)
+			}
+		})
+	}
+}
+
 func TestRunnerRunStream_CancelStopsForegroundChildProcess(t *testing.T) {
 	runner := NewRunner(Config{
 		WorkDir: ".",

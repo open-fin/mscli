@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"gitcode.com/mindspore/mscli/internal/update"
 	"gitcode.com/mindspore/mscli/internal/version"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 var updatePromptSelectedStyle = lipgloss.NewStyle().
@@ -220,7 +220,7 @@ func doUpdate(result *update.CheckResult, p *tea.Program) tea.Cmd {
 		}
 		defer os.Remove(tmpPath)
 
-		if err := update.Install(tmpPath); err != nil {
+		if err := update.Install(tmpPath, result.SHA256); err != nil {
 			return updateDoneMsg{fmt.Errorf("install failed: %w", err)}
 		}
 		return updateDoneMsg{}
