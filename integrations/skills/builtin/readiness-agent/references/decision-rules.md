@@ -17,7 +17,7 @@
 
 ## Workspace Boundary
 
-- treat the current workspace as the certification boundary
+- treat the current workspace as the assessment boundary
 - only inspect workspace-local entry scripts, configs, assets, and virtual
   environments unless the user explicitly points to another path
 - external runtime directories may be resolved from environment variables when
@@ -39,4 +39,6 @@
 
 ## Final Question
 
-After `READY` or `WARN`, ask whether to run the real model script now.
+After `check`, state that no real train or inference command was executed.
+Suggest `/preflight` for asset validation or an explicit run command outside
+check mode for workload execution.

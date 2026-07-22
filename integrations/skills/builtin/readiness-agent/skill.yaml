@@ -1,8 +1,8 @@
 schema_version: "1.1.0"
 name: "readiness-agent"
 display_name: "Readiness Agent"
-description: "Check whether a local single-machine workspace is ready to train or run inference now, identify what is missing before execution, and optionally apply safe user-space readiness fixes instead of treating the request as post-run failure diagnosis."
-version: "0.2.0"
+description: "Check or fix readiness for a local single-machine workspace. Check performs guided read-only assessment, may ask structured confirmation questions, and writes readiness artifacts. Fix applies safe user-space remediation based on the latest assessment."
+version: "0.3.0"
 
 entry:
   type: "manual"
@@ -23,7 +23,7 @@ inputs:
   - name: "working_dir"
     type: "path"
     required: false
-    description: "Workspace root or code folder to certify. Defaults to the current shell path."
+    description: "Workspace root or code folder to assess. Defaults to the current shell path."
   - name: "target"
     type: "enum"
     required: false
@@ -45,7 +45,7 @@ inputs:
     required: false
     default: "check"
     choices: ["check", "fix"]
-    description: "Execution strategy only. Check validates without mutation, and fix enables safe user-space remediation."
+    description: "Execution strategy. Check performs guided read-only assessment and may ask structured confirmation questions. Fix enables safe user-space remediation based on the latest assessment."
   - name: "entry_script"
     type: "path"
     required: false
@@ -85,12 +85,48 @@ inputs:
   - name: "task_smoke_cmd"
     type: "string"
     required: false
-    description: "Optional explicit smoke command for stronger target validation."
+    description: "Optional explicit smoke command for stronger target validation. Gated behind user confirmation in check mode."
   - name: "allow_network"
     type: "boolean"
     required: false
     default: false
     description: "Allows network-dependent remediation such as confirmed model download or remote compatibility lookup when the workflow permits it."
+
+  - name: "launcher_hint"
+    type: "enum"
+    required: false
+    default: "auto"
+    choices: ["auto", "python", "bash", "torchrun", "accelerate", "deepspeed", "msrun", "llamafactory-cli", "make"]
+    description: "Optional launcher preference for assessment."
+  - name: "target_hint"
+    type: "enum"
+    required: false
+    default: "auto"
+    choices: ["auto", "training", "inference"]
+    description: "Optional target preference for assessment when separate from the legacy target field."
+  - name: "launch_command"
+    type: "string"
+    required: false
+    description: "Explicit launch command template for read-only assessment."
+  - name: "selected_env_root"
+    type: "path"
+    required: false
+    description: "Explicit environment root to treat as the selected runtime environment in assessment."
+  - name: "confirm"
+    type: "string"
+    required: false
+    repeated: true
+    description: "Confirmation binding in field=value form."
+  - name: "non_interactive"
+    type: "boolean"
+    required: false
+    default: false
+    description: "When true, check mode must not block for confirmation and should use best-effort inference."
+  - name: "refresh_cache"
+    type: "boolean"
+    required: false
+    default: false
+    description: "Refresh the latest readiness cache during assessment."
 
 outputs:
   report_schema: "skills/_shared/contract/report.schema.json"
@@ -113,7 +149,6 @@ tags:
   - "training"
   - "inference"
   - "preflight"
-  - "certification"
   - "mindspore"
   - "torch_npu"
   - "ascend"

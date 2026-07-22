@@ -1,0 +1,46 @@
+{
+  "check": "ms_pta_consistency",
+  "case_id": "example_case",
+  "strategy": "bitwise_strict",
+  "passed": true,
+  "error_type": null,
+  "all_equal": true,
+  "all_raw_bytes_equal": true,
+  "all_binary_equal": true,
+  "outputs": [
+    {
+      "name": "loss",
+      "equal": true,
+      "semantic_equal": true,
+      "shape": [
+        1
+      ],
+      "pta_shape": [
+        1
+      ],
+      "dtype": "float32",
+      "pta_dtype": "float32",
+      "rtol": 0.0,
+      "atol": 0.0,
+      "equal_nan": true,
+      "ms_path": "./ms_outputs/loss.npy",
+      "pta_path": "./pta_outputs/loss.npy",
+      "ms_md5": "4e6f9c2b0d5d7749f1f40f4e13be1f6f",
+      "pta_md5": "4e6f9c2b0d5d7749f1f40f4e13be1f6f",
+      "binary_equal": true,
+      "ms_raw_md5": "9c1583d4e012fb5948fcb47e21fce7f7",
+      "pta_raw_md5": "9c1583d4e012fb5948fcb47e21fce7f7",
+      "raw_bytes_equal": true,
+      "special_values": {
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0
+      },
+      "pta_special_values": {
+        "nan_count": 0,
+        "posinf_count": 0,
+        "neginf_count": 0
+      }
+    }
+  ]
+}

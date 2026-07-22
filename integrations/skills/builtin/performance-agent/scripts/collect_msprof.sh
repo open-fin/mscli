@@ -157,18 +157,22 @@ if [[ "$RUN_MODE" == "run" ]]; then
   fi
 fi
 
-cat > "$COLLECT_METADATA" <<EOF
-{
-  "stack": "$STACK",
-  "output_dir": "$OUTPUT_DIR",
-  "source_script": "$SCRIPT_PATH",
-  "perf_script": "$PERF_SCRIPT_PATH",
-  "python_bin": "$PYTHON_BIN",
-  "run_mode": "$RUN_MODE",
-  "run_status": "$RUN_STATUS",
-  "run_exit_code": $RUN_EXIT_CODE
+"$PYTHON_BIN" - "$COLLECT_METADATA" "$STACK" "$OUTPUT_DIR" "$SCRIPT_PATH" "$PERF_SCRIPT_PATH" "$PYTHON_BIN" "$RUN_MODE" "$RUN_STATUS" "$RUN_EXIT_CODE" <<'PY'
+import json, sys
+from pathlib import Path
+out_path = sys.argv[1]
+payload = {
+    "stack": sys.argv[2],
+    "output_dir": sys.argv[3],
+    "source_script": sys.argv[4],
+    "perf_script": sys.argv[5],
+    "python_bin": sys.argv[6],
+    "run_mode": sys.argv[7],
+    "run_status": sys.argv[8],
+    "run_exit_code": int(sys.argv[9]),
 }
-EOF
+Path(out_path).write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+PY
 
 echo "Locating profiler output under $OUTPUT_DIR ..."
 "$PYTHON_BIN" "$LOCATOR_SCRIPT" --working-dir "$OUTPUT_DIR" --output-json "$LOCATOR_JSON"

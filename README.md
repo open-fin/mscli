@@ -11,10 +11,11 @@ It is built on two closely related parts:
 
 ## Latest Version
 
-Latest version: `MindSpore Model Agent v0.1.4`. See [changelog.md](changelog.md) for update history.
+Latest version: `MindSpore Model Agent v0.1.5`. See [changelog.md](changelog.md) for update history.
 
 Highlights:
 
+- `[security]` Hardened permission prompts, shell command filtering, safe-command classification, and update binary integrity verification.
 - `[skills]` Added baseline analysis support for Ascend A2 training runtime failures, accuracy drift, and performance bottlenecks.
 - `[skills]` Added Hugging Face Transformers model migration support and integrated `mhc` / `attn-residual` into the Qwen3 skill template.
 - `[skills]` Integrated `openjiuwen claw`, with precision-location examples and deployment guidance.

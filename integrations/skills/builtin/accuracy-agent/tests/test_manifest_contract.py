@@ -14,7 +14,7 @@ def test_manifest_contract_fields_present():
     text = _manifest_text()
     assert 'name: "accuracy-agent"' in text
     assert 'display_name: "Accuracy Agent"' in text
-    assert 'version: "0.2.0"' in text
+    assert 'version: "0.3.0"' in text
     assert 'type: "manual"' in text
     assert 'path: "SKILL.md"' in text
     assert 'network: "none"' in text

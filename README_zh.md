@@ -11,10 +11,11 @@ MindSpore Model Agent 是一个面向 MindSpore 生态的、聚焦模型训练�
 
 ## 最新版本
 
-最新版本：`MindSpore Model Agent v0.1.4`。更新历史请参见 [changelog.md](changelog.md)。
+最新版本：`MindSpore Model Agent v0.1.5`。更新历史请参见 [changelog.md](changelog.md)。
 
 亮点包括：
 
+- `[安全]` 加固权限提示、shell 命令过滤、安全命令分类与更新二进制完整性校验。
 - `[skills]` 新增 Ascend A2 模型训练运行时失败报错、精度偏移和性能瓶颈的基础分析能力。
 - `[skills]` 新增 Hugging Face Transformers 模型迁移支持，并将 `mhc` / `attn-residual` 集成到 Qwen3 skill 模板中。
 - `[skills]` 集成 `openjiuwen claw`，并提供精度定位示例与部署指南。

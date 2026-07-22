@@ -32,7 +32,7 @@ def test_manifest_declares_route_inputs_and_outputs():
 
 def test_skill_describes_four_stage_migration_workflow():
     text = SKILL.read_text(encoding="utf-8")
-    assert "# Model Agent" in text
+    assert "# Migrate Agent" in text
     assert "1. `migration-analyzer`" in text
     assert "2. `route-selector`" in text
     assert "3. `migration-builder`" in text

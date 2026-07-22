@@ -1,0 +1,56 @@
+schema_version: "1.1.0"
+name: "api-helper"
+display_name: "API Helper"
+description: "Auto-invoked when users ask MindSpore API questions. Resolves API call chains for mint.*, Tensor.*, forward/backward operators, and optional NPU backend dispatch."
+version: "0.1.0"
+
+entry:
+  type: "manual"
+  path: "SKILL.md"
+
+role: "agent"
+
+composes: []
+
+factory:
+  card_types:
+    - "report"
+
+inputs:
+  - name: "api_name"
+    type: "string"
+    required: false
+    description: "MindSpore API or operator name to look up, e.g. mint.add, Tensor.sum, ops.functional.layer_norm."
+  - name: "resolve_backend"
+    type: "boolean"
+    required: false
+    default: false
+    description: "When true, also resolves NPU/ACLNN backend dispatch for the operator."
+  - name: "working_dir"
+    type: "path"
+    required: false
+    description: "MindSpore source tree root. Defaults to the current shell path."
+
+outputs:
+  report_schema: "skills/_shared/contract/report.schema.json"
+  out_dir_layout: "runs/<run_id>/out/"
+
+permissions:
+  network: "none"
+  filesystem: "workspace-read"
+
+dependencies:
+  tools:
+    - "bash"
+    - "find"
+    - "rg"
+  python: []
+
+tags:
+  - "api"
+  - "mint"
+  - "tensor"
+  - "operator"
+  - "backend"
+  - "aclnn"
+  - "mindspore"

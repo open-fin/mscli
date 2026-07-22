@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 from ascend_compat import assess_installed_framework_compatibility, resolve_framework_compatibility
 from python_selection import python_in_env, resolve_selected_python
@@ -47,7 +47,7 @@ EXAMPLE_RECIPES = [
         "model_hub_id": "Qwen/Qwen3-0.6B",
         "dataset_hub_id": "karthiksagarn/astro_horoscope",
         "entry_script": "train.py",
-        "template_path": Path(__file__).resolve().parents[1] / "examples" / "qwen3_0_6b_training_example.py",
+        "template_path": Path(__file__).resolve().parents[1] / "templates" / "qwen3_0_6b_training_example.py",
     }
 ]
 PROBE_CODE = """
@@ -685,11 +685,12 @@ def probe_hf_endpoint(endpoint: str) -> Tuple[bool, Optional[str]]:
         urljoin(endpoint + "/", "api/models/Qwen/Qwen3-0.6B"),
     ]
     errors: List[str] = []
+    opener = build_opener(ProxyHandler({}))
     for attempt in range(3):
         for probe_url in probe_urls:
             try:
                 request = Request(probe_url, method="HEAD", headers={"User-Agent": "readiness-agent/0.1"})
-                with urlopen(request, timeout=5) as response:
+                with opener.open(request, timeout=5) as response:
                     status = getattr(response, "status", None) or response.getcode()
                     if status and int(status) < 500:
                         return True, None
@@ -1082,7 +1083,7 @@ def collect_checks(target: dict, closure: dict, timeout_seconds: int) -> List[di
     checks.append(script_parse)
 
     runtime_status = "warn"
-    runtime_summary = "Runtime smoke did not gather enough evidence to certify this workspace yet."
+    runtime_summary = "Runtime smoke did not gather enough evidence to assess this workspace yet."
     runtime_evidence: List[str] = []
     framework_smoke_check = next((item for item in checks if item.get("id") == "runtime-smoke-framework"), None)
     script_parse_status = str(script_parse.get("status") or "").lower()
@@ -1275,11 +1276,17 @@ def preferred_pip_index_urls() -> List[str]:
     return list(SUPPORTED_PIP_INDEX_URLS)
 
 
+def subprocess_error_message(exc: subprocess.CalledProcessError, fallback: str) -> str:
+    stderr = (exc.stderr or "").strip()
+    stdout = (exc.stdout or "").strip()
+    return stderr or stdout or fallback
+
+
 def run_install_command(command: List[str]) -> Tuple[bool, str]:
     try:
         subprocess.run(command, check=True, text=True, capture_output=True, timeout=300)
     except subprocess.CalledProcessError as exc:
-        return False, exc.stderr.strip() or exc.stdout.strip() or "install command failed"
+        return False, subprocess_error_message(exc, "install command failed")
     except (OSError, subprocess.SubprocessError) as exc:
         return False, str(exc)
     return True, ""
@@ -1359,7 +1366,7 @@ def download_huggingface_model_asset(python_path: Path, repo_id: str, local_path
     try:
         subprocess.run([str(python_path), "-c", code, repo_id, str(local_path)], check=True, text=True, capture_output=True, env=env, timeout=600)
     except subprocess.CalledProcessError as exc:
-        return False, exc.stderr.strip() or exc.stdout.strip() or "model download failed"
+        return False, subprocess_error_message(exc, "model download failed")
     except (OSError, subprocess.SubprocessError) as exc:
         return False, str(exc)
     return True, f"downloaded model asset {repo_id}"
@@ -1388,7 +1395,7 @@ def download_huggingface_dataset_asset(
     try:
         subprocess.run([str(python_path), "-c", code, repo_id, split_token, str(local_path)], check=True, text=True, capture_output=True, env=env, timeout=600)
     except subprocess.CalledProcessError as exc:
-        return False, exc.stderr.strip() or exc.stdout.strip() or "dataset download failed"
+        return False, subprocess_error_message(exc, "dataset download failed")
     except (OSError, subprocess.SubprocessError) as exc:
         return False, str(exc)
     return True, f"downloaded dataset asset {repo_id}:{split_token}"
@@ -1669,6 +1676,65 @@ def write_readiness_env_file(path: Path, root: Path, target: dict, closure: dict
     lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
     return payload
+
+
+def load_latest_readiness_lock(working_dir: Path, output_dir: Optional[Path] = None) -> Tuple[Optional[dict], Optional[str]]:
+    lock_path = (output_dir or working_dir / "readiness-output") / "latest" / "readiness-agent" / "workspace-readiness.lock.json"
+    if not lock_path.exists():
+        return None, "No readiness lock found; falling back to workspace inference."
+    try:
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, f"Failed to read readiness lock: {exc}"
+
+    if lock.get("producer") != "readiness-agent":
+        return None, f"Invalid readiness lock producer: {lock.get('producer')}; falling back to workspace inference."
+    supported_versions = {"readiness.assessment.v1"}
+    if lock.get("schema_version") not in supported_versions:
+        return None, f"Unsupported readiness lock schema_version: {lock.get('schema_version')}; falling back to workspace inference."
+    if lock.get("status") == "NEEDS_CONFIRMATION":
+        return None, "Readiness lock is in NEEDS_CONFIRMATION state; falling back to workspace inference."
+
+    lock_workspace = (lock.get("workspace") or {}).get("root")
+    if lock_workspace and Path(lock_workspace).resolve() != working_dir.resolve():
+        return None, f"Readiness lock workspace mismatch: expected {working_dir}, got {lock_workspace}; falling back to workspace inference."
+
+    return lock, None
+
+
+def _lock_value(lock: dict, *path: str) -> Optional[str]:
+    node = lock
+    for key in path:
+        if not isinstance(node, dict):
+            return None
+        node = node.get(key)
+    return str(node) if node is not None else None
+
+
+def seed_args_from_lock(args: object, lock: dict) -> None:
+    current_target = getattr(args, "target", None)
+    if current_target in {None, "auto"}:
+        value = _lock_value(lock, "target", "value")
+        if value:
+            args.target = value
+
+    current_launcher = getattr(args, "launcher_hint", None)
+    if current_launcher in {None, "auto"}:
+        value = _lock_value(lock, "launcher", "type")
+        if value:
+            args.launcher_hint = value
+
+    current_framework = getattr(args, "framework_hint", None)
+    if current_framework is None:
+        value = _lock_value(lock, "runtime", "framework", "name")
+        if value:
+            args.framework_hint = "pta" if value == "pytorch_npu" else value
+
+    current_python = getattr(args, "selected_python", None)
+    if current_python is None:
+        value = _lock_value(lock, "runtime", "python", "executable")
+        if value:
+            args.selected_python = value
 
 
 def build_state(args: object, root: Path) -> dict:

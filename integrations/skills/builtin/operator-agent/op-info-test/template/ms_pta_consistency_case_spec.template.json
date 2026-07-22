@@ -1,0 +1,22 @@
+{
+  "op_name": "example_op",
+  "ms_mode": "both",
+  "coverage_depth": "forward+backward",
+  "summary_out": "./ms_pta_consistency_all_case_res_summary.json",
+  "cases": [
+    {
+      "case_id": "example_case",
+      "ms_dir": "./case_a/ms_outputs",
+      "pta_dir": "./case_a/pta_outputs",
+      "outputs": [
+        "loss",
+        "out0"
+      ],
+      "strategy": "bitwise_strict",
+      "rtol": 0.0,
+      "atol": 0.0,
+      "equal_nan": true,
+      "summary_out": "./case_a/ms_pta_consistency_single_case_res_summary.json"
+    }
+  ]
+}

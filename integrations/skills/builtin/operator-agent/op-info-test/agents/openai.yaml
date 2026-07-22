@@ -1,0 +1,4 @@
+interface:
+  display_name: "Op Info Test"
+  short_description: "Generate and locally validate MindSpore OpInfo ST tests"
+  default_prompt: "Add and locally validate MindSpore op_info ST coverage for this operator."

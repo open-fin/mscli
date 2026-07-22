@@ -24,6 +24,9 @@ Source repository:
 - Hugging Face `transformers`
 - Core path: `transformers/src/transformers`
 - Model tests: `transformers/tests/models`
+- A standalone HF-style model repository is also valid for this route, but it
+  has different configuration, tokenization, and processor rules. Load
+  `references/hf-transformers-standalone-model-repo.md` for those cases.
 
 Target repository:
 
@@ -98,6 +101,10 @@ files.
 #### 3.2 Device handling cleanup
 
 - Remove `.to(device)`, `.cuda()`, `torch.device`, and `mps` branches
+- Do not add `model.device`, `.device` compatibility properties, or other
+  PyTorch-style device shims
+- Remove `inputs.to(model.device)` from tests and examples instead of adapting
+  the model to support it
 - Check function signatures and remove device-only parameters when they are no
   longer needed
 - Do not remove `register_buffer` just because the original code had device
@@ -182,6 +189,109 @@ For `mindone/mindone/transformers/models/{model_name}/__init__.py`:
 
 Use Hugging Face auto files as a reference for insertion order.
 
+For standalone HF-style model repositories, also verify that every component
+needed by `trust_remote_code=False` loading has a local target implementation
+and local auto registration.
+
+### 4.1 Processor registration checks
+
+Before changing a processor class, inspect the source processor and source-side
+auto mappings for tokenizer, image processor, video processor, and processor
+classes.
+
+- Preserve source processor attributes when MindOne has equivalent local Auto
+  support.
+- If MindOne lacks local `AutoTokenizer` support for the model, add or register
+  the tokenizer locally when possible.
+- Only use processor-class workarounds, such as pointing `tokenizer_class` at a
+  concrete tokenizer class or reducing `attributes`, when local Auto support is
+  missing and the migration report documents the reason.
+
+### 4.2 Unit test migration
+
+When the user requests test migration, or when source model tests exist and the
+migration goal includes tests, adapt source tests from:
+
+- source: `transformers/tests/models/{model_name}/`
+- target: `mindone/tests/transformers_tests/models/{model_name}/`
+
+Use this order:
+
+1. Inspect the upstream test file and classify what it covers:
+   - fast model unit tests
+   - slow real-weight or generation tests
+   - processor/tokenizer tests
+   - multimodal input construction
+   - attention backend or device-specific tests
+2. Inspect existing MindOne tests for the closest local pattern:
+   - same model family first
+   - same task type second, such as causal LM, vision-to-seq, or multimodal
+   - generic named-modules tests, such as `blt`, only when there is no closer pattern
+3. Create `mindone/tests/transformers_tests/models/{model_name}/__init__.py` as
+   an empty file.
+4. Rewrite the fast model unit tests into MindOne's PyTorch-vs-MindSpore
+   parity style:
+   - add the MindOne provenance header to new test files rewritten from
+     upstream, such as `test_modeling_*.py`
+   - use `get_modules`, `generalized_parse_args`, and `compute_diffs`
+   - use `pytest.mark.parametrize` for dtype and mode expansion
+   - use `MODES = [1]`
+   - map PyTorch output attributes to MindSpore tuple indices with `outputs_map`
+5. Preserve the source test's model intent, but adapt its harness to MindOne:
+   - reuse upstream config classes from `transformers` when the model migration
+     also reuses upstream config
+   - prefer shared testers such as `CausalLMModelTester` when they already
+     express the source test inputs
+   - set model-required execution fields such as
+     `config._attn_implementation = "eager"` when needed
+   - do not add version gates such as `if transformers.__version__ >= ...`
+   - do not add unrelated config overrides such as `use_cache=False` or
+     `sliding_window=None` unless the source behavior or target model requires them
+6. Only migrate fast model unit tests. Do not migrate slow real-weight,
+   generation, remote asset, flash-attention, or device-specific tests as part
+   of this unit test migration step.
+7. Use the default transformer parity thresholds unless a measured mismatch
+   requires otherwise:
+   - `{"fp32": 5e-4, "fp16": 5e-3, "bf16": 5e-2}`
+
+Verification for migrated tests:
+
+- run `python -m py_compile` on new or changed test files
+- run the target test file with pytest, for example:
+  `pytest -q tests/transformers_tests/models/{model_name}/test_modeling_{model_name}.py -q`
+- if a test fails, classify the cause before editing:
+  - model migration issue
+  - shared MindOne component issue
+  - test config/input mismatch
+  - precision threshold issue
+- treat threshold changes as a last resort and report the reason explicitly
+
+### 4.3 File provenance and license header
+
+Before declaring the migration done, normalize new upstream-adapted target
+files to the local MindOne provenance header convention:
+
+```python
+# This code is adapted from https://github.com/huggingface/transformers
+# with modifications to run transformers on mindspore.
+```
+
+Apply it with these rules:
+
+- Add the two provenance lines to new migrated source files such as
+  `modeling_*.py`, `processing_*.py`, `image_processing_*.py`, and
+  `video_processing_*.py`.
+- Add the same provenance lines to new target-side test files rewritten from
+  upstream tests, such as `test_modeling_*.py`.
+- If the file already has a copyright header and Apache license block, insert
+  the provenance lines after the copyright lines and before the license body.
+- If the file starts with an upstream autogenerated notice, preserve that
+  notice and place the provenance lines immediately after it.
+- Do not add the provenance header to files that are intentionally required to
+  stay empty.
+- For `mindone/tests/transformers_tests/models/{model_name}/__init__.py`,
+  preserve the empty-file convention and do not add a header.
+
 ### 5. Done criteria
 
 - The minimal import validation succeeds via a `from transformers import xxx`
@@ -189,16 +299,22 @@ Use Hugging Face auto files as a reference for insertion order.
   MindOne
 - Auto mappings and exports are updated
 - Verification artifacts or next test commands are recorded
+- If source model tests were migrated, target tests exist under
+  mindone/tests/transformers_tests/models/{model_name}/ and the single-file
+  pytest command passes or the remaining failure is reported with cause
 
 Do not mark the migration complete before the `from transformers import xxx`
 minimal import validation has passed for the migrated target.
 
 ## Route Guardrails
 
-- Do not migrate `configuration_*.py`, `tokenization_*.py`, or
-  `*moduler_*.py`
+- For upstream `transformers` source-tree migrations, do not migrate
+  `configuration_*.py`, `tokenization_*.py`, or `*moduler_*.py` by default.
+- For standalone HF-style model repos, migrate and register
+  `configuration_*`, tokenizer, and processor components when the target repo
+  lacks local implementations required for `trust_remote_code=False`.
 - Reuse Hugging Face configuration and tokenization implementations directly
-  unless the target repo has a compelling local requirement
+  only when the target repo can load them locally without remote-code fallback.
 - Keep changes minimal and aligned with existing MindOne patterns
 - Avoid adding custom compatibility wrappers unless they are required
 - Use diff-based insertion when updating auto maps
@@ -208,6 +324,8 @@ guardrails:
 
 - `references/hf-transformers-guardrails.md`
 - `references/hf-transformers-env.md`
+- `references/hf-transformers-standalone-model-repo.md` for standalone
+  HF-style model repositories
 
 ## Route Output
 
@@ -215,4 +333,6 @@ Report at least:
 
 - files changed and why
 - tests run, tests generated, or tests recommended
+- whether new migrated files were normalized to the local provenance header
+  convention
 - remaining TODOs and risks

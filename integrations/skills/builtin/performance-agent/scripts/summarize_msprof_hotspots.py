@@ -2,10 +2,12 @@
 import argparse
 import csv
 import json
-import re
+import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Optional
+
+from perf_common import normalize_key, parse_number
 
 
 NAME_KEYS = {
@@ -41,24 +43,6 @@ COMM_PATTERNS = (
     "broadcast",
     "hccl",
 )
-
-
-def normalize_key(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
-
-
-def parse_number(value: str) -> Optional[float]:
-    text = value.strip()
-    if not text:
-        return None
-    text = text.replace(",", "")
-    match = re.search(r"-?\d+(?:\.\d+)?", text)
-    if not match:
-        return None
-    try:
-        return float(match.group(0))
-    except ValueError:
-        return None
 
 
 def classify_op(name: str) -> str:
@@ -197,7 +181,8 @@ def main() -> int:
 
     source_path, rows = find_best_source(input_dir)
     if not source_path or not rows:
-        raise SystemExit("No operator time table with recognizable name/time columns was found under the input directory.")
+        print("No operator time table with recognizable name/time columns was found under the input directory.", file=sys.stderr)
+        raise SystemExit(1)
 
     report = build_report(rows, source_path, args.top_n)
     output_md.write_text(render_markdown(report), encoding="utf-8")

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -10,7 +11,20 @@ from perf_common import normalize_key, parse_number, read_json, write_json
 NAME_KEYS = {"name", "op_name", "operator", "operator_name", "collective", "task_name"}
 TIME_KEYS = {"time", "time_ms", "duration", "duration_ms", "total_time", "total_time_ms", "elapse_time"}
 COUNT_KEYS = {"count", "calls", "op_count"}
-SIZE_KEYS = {"size_mb", "data_size_mb", "msg_size_mb", "message_size_mb"}
+SIZE_KEYS = {"size_mb", "data_size_mb", "msg_size_mb", "message_size_mb", "transit_size_mb"}
+# Collective time keys: actual numeric time fields, NOT container keys like "communication_time_info"
+COLLECTIVE_TIME_KEYS = {"elapse_time_ms", "elapsed_time_ms", "time_ms", "duration_ms", "total_time_ms"}
+OP_PREFIXES = ("hcom_", "allreduce", "allgather", "broadcast", "reducescatter")
+# Keys that indicate a metric container (not an actual op name) - used to skip structural keys
+_METRIC_KEY_PREFIXES = ("communication", "bandwidth", "rdma", "hccs", "pcie", "sdma", "sio", "start")
+
+
+def _op_fraction(normalized: dict) -> float:
+    """Fraction of keys that look like collective op names (hcom_*, allreduce*, etc.)."""
+    if not normalized:
+        return 0.0
+    matches = sum(1 for k in normalized if any(k.startswith(p) for p in OP_PREFIXES))
+    return matches / len(normalized)
 
 
 def flatten_records(node) -> list[dict]:
@@ -42,11 +56,95 @@ def flatten_records(node) -> list[dict]:
                         "size_mb": size_mb,
                     }
                 ]
-        records: list[dict] = []
-        for value in node.values():
+
+        # Handle nested collective format: step > collective > {op_name} > {time_info_key, bw_info_key}
+        # Also handle when normalized keys are op names (coll_dict level without 'collective' key)
+        in_collective_branch = (
+            "collective" in normalized
+            or any(k in normalized for k in ("communication_time_info", "communication_bandwidth_info"))
+            or _op_fraction(normalized) > 0.5
+        )
+        if in_collective_branch:
+            records: list[dict] = []
+            for coll_key, coll_value in node.items():
+                if not isinstance(coll_value, dict):
+                    continue
+                coll_name = str(coll_key).strip()
+                # Skip metric container keys (Communication Time Info, Bandwidth, RDMA, HCCS, etc.)
+                if any(coll_name.lower().startswith(p) for p in _METRIC_KEY_PREFIXES):
+                    continue
+                ncoll = {normalize_key(k): v for k, v in coll_value.items()}
+                # Is coll_value a container of multiple op records (e.g., the collective dict)?
+                is_op_container = _op_fraction(ncoll) > 0.5
+                # Is coll_value a leaf op data dict (e.g., {Communication Time Info: {...}})?
+                is_op_data = (
+                    "communication_time_info" in ncoll or "communication_bandwidth_info" in ncoll
+                )
+                coll_name_normalized = normalize_key(coll_name)
+                is_real_op_name = any(coll_name_normalized.startswith(p) for p in OP_PREFIXES)
+
+                time_ms = None
+                size_mb = None
+                # Check top-level of coll_value if it's neither container nor op_data
+                if not is_op_container and not is_op_data:
+                    for tk in COLLECTIVE_TIME_KEYS:
+                        if tk in ncoll:
+                            tv = parse_number(ncoll[tk])
+                            if tv is not None:
+                                time_ms = tv
+                                break
+                    for sk in SIZE_KEYS:
+                        if sk in ncoll:
+                            sv = parse_number(ncoll[sk])
+                            if sv is not None:
+                                size_mb = sv
+                                break
+                # Check nested metric categories (RDMA, HCCS, etc.) within op data or container
+                if is_op_data or is_op_container:
+                    for metric_value in coll_value.values():
+                        if isinstance(metric_value, dict):
+                            nmetric = {normalize_key(k): v for k, v in metric_value.items()}
+                            if time_ms is None:
+                                for tk in COLLECTIVE_TIME_KEYS:
+                                    if tk in nmetric:
+                                        tv = parse_number(nmetric[tk])
+                                        if tv is not None:
+                                            time_ms = tv
+                                            break
+                            if size_mb is None:
+                                for sk in SIZE_KEYS:
+                                    if sk in nmetric:
+                                        sv = parse_number(nmetric[sk])
+                                        if sv is not None:
+                                            size_mb = sv
+                                            break
+                # Create record when coll_key is a real op name and we found time_ms
+                if coll_name and time_ms is not None and not is_op_container and (is_real_op_name or not is_op_data):
+                    records.append({
+                        "name": coll_name,
+                        "time_ms": time_ms,
+                        "count": 1,
+                        "size_mb": size_mb,
+                    })
+                # Recurse into container dicts (not op data dicts - they're leaves)
+                if is_op_container:
+                    records.extend(flatten_records(coll_value))
+                if is_op_data:
+                    continue
+            for value in node.values():
+                if isinstance(value, dict):
+                    records.extend(flatten_records(value))
+                elif isinstance(value, list):
+                    records.extend(flatten_records(value))
+            return records
+
+    records: list[dict] = []
+    for value in node.values():
+        if isinstance(value, dict):
             records.extend(flatten_records(value))
-        return records
-    return []
+        elif isinstance(value, list):
+            records.extend(flatten_records(value))
+    return records
 
 
 def matrix_stats(node) -> dict:
@@ -146,11 +244,11 @@ def main() -> int:
         matrix_path = matrix_path or inferred_matrix
 
     if not comm_path or not comm_path.exists():
-        raise SystemExit("communication.json was not found. Provide --communication-json or --trace-root with communication artifacts.")
+        print("communication.json was not found. Provide --communication-json or --trace-root with communication artifacts.", file=sys.stderr)
+        raise SystemExit(1)
 
     comm_records = flatten_records(read_json(comm_path))
     summary = summarize_records(comm_records)
-    matrix_payload = None
     imbalance_ratio = None
     if matrix_path and matrix_path.exists():
         matrix_payload = read_json(matrix_path)
@@ -171,6 +269,7 @@ def main() -> int:
             else "Communication does not currently dominate the exported evidence."
         ),
     }
+
     write_json(Path(args.output_json), report)
     print(json.dumps({"dominant_collective": report["dominant_collective"], "pressure": report["communication_pressure"]}, indent=2))
     return 0
