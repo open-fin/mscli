@@ -1,48 +1,53 @@
-English | [中文](README_zh.md)
+[English](README.md) | [中文](README_zh.md)
 
-# MindSpore Model Agent
+# mscli
 
-MindSpore Model Agent is a training-focused AI agent solution for the MindSpore ecosystem. It is designed for the high-frequency engineering work around model training, where users need more than general code generation and need help with domain-specific training tasks.
+`mscli` is an experimental CLI harness for building and exploring agent workflows in AI infrastructure.
 
-It is built on two closely related parts:
+It provides a place to test the runtime components behind an agentic CLI, including model-provider integration, tool execution, permissions, context management, sessions, MCP servers, skills, memory, and terminal interaction.
 
-- [`mindspore-skills`](https://gitcode.com/mindspore/mindspore-skills): the domain capability layer for model training and debugging tasks. It provides reusable skills for readiness checking, failure diagnosis, accuracy analysis, performance analysis, model migration, algorithm adaptation, and operator implementation. These skills can work not only with MindSpore Model Agent, but also with other agentic CLI environments such as Claude Code, OpenCode, and Codex.
-- `mscli`: the official CLI of MindSpore Model Agent. It provides better integration with related skills and is optimized for model training use cases, offering a more unified end-to-end experience for training-oriented workflows.
+`mscli` is not an official MindSpore product or a model-specific agent. It is an evolving engineering experiment, so interfaces and behavior may change.
 
-## Latest Version
+## What You Can Explore
 
-Latest version: `MindSpore Model Agent v0.1.5`. See [changelog.md](changelog.md) for update history.
+- interactive terminal UI and headless execution
+- OpenAI Chat Completions, OpenAI Responses, and Anthropic-compatible providers
+- a ReAct-style model/tool loop with context compaction
+- filesystem and shell tools with permission and path policies
+- persistent sessions, resume, replay, and file-backed memory
+- MCP server discovery and tool execution
+- embedded and dynamically loaded skills
+- artifacts for large tool results and debugging workflows
 
-Highlights:
+See [Architecture](docs/arch.md) for the current runtime flow and package boundaries.
 
-- `[mcp]` Added end-to-end MCP support with project approval, stdio / HTTP transports, tool discovery, lifecycle controls, and reconnect handling.
-- `[memory]` Added file-backed automatic memory using `MEMORY.md` and project `MSCLI.md`, plus `/init` and runtime reasoning-effort controls.
-- `[cli]` Added headless `exec` workflows and session resume hints for scripting and CI use cases.
-- `[tools]` Added external-path policy enforcement, capability metadata, standardized result states, lifecycle events, and persisted large-result artifacts.
-- `[skills]` Synced the latest built-in MindSpore skills and expanded operator development with dedicated ACLNN and custom-op builders.
-- `[security]` Hardened permission prompts, shell command filtering, safe-command classification, and update binary integrity verification.
+## Status
 
-## MindSpore CLI
+The latest tagged version is `v0.1.5`. See [changelog.md](changelog.md) for the release history.
 
-MindSpore CLI is the official end-to-end interface of MindSpore Model Agent. It is designed to provide a unified CLI experience for training-oriented workflows, with tighter integration with the related skills behind the solution.
+Treat `mscli` as experimental software:
+
+- Review tool permissions before approving commands.
+- Use headless commands carefully because `exec`, `fix`, and `diagnose` enable unattended execution.
+- Pin a version if you depend on an interface that is not yet stable.
 
 ## Installation
 
-### Install from script
+### Install from Script
 
 ```bash
 curl -fsSL https://api.gitcode.com/api/v5/repos/mindspore/mscli/raw/scripts/install.sh?ref=main | bash
 ```
 
-### Build from source
+### Build from Source
 
-Go 1.24.2+:
+Go 1.24.2 or newer is required.
 
 ```bash
-git clone https://gitcode.com/mindspore/mscli.git
+git clone https://github.com/open-fin/mscli.git
 cd mscli
 go build -o mscli ./cmd/mscli
-./mscli
+./mscli --help
 ```
 
 ## Quick Start
@@ -69,11 +74,63 @@ export MSCLI_MODEL=deepseek-v4-pro
 mscli
 ```
 
+### Use Another Compatible Provider
+
+```bash
+export MSCLI_PROVIDER=<openai-completion|openai-responses|anthropic>
+export MSCLI_BASE_URL=<provider-base-url>
+export MSCLI_API_KEY=<your-api-key>
+export MSCLI_MODEL=<model-name>
+
+mscli
+```
+
+## Usage
+
+Start the interactive terminal interface:
+
+```bash
+mscli
+```
+
+Run a free-form task headlessly:
+
+```bash
+mscli exec "inspect this repository"
+```
+
+Useful commands include:
+
+```text
+mscli resume [sess_xxx]
+mscli replay [sess_xxx|trajectory.json|trajectory.jsonl]
+mscli diagnose <problem>
+mscli fix <problem>
+mscli exec <task>
+```
+
+Run `mscli --help` or use `--help` on a subcommand for the current command surface.
+
+## Skills
+
+`mscli` includes a skill-loading mechanism and currently embeds a set of infrastructure-oriented skills at build time.
+
+[ms-skills](https://github.com/open-fin/ms-skills) is a separate repository containing skill examples and reusable patterns for AI-infrastructure work.
+
+The two repositories can be used independently. They are related experiments, not parts of a single product.
+
 ## Documentation
 
 - [Architecture](docs/arch.md)
-- [Contributor Guide](docs/agent-contributor-guide.md)
+- [MCP](docs/mcp.md)
+- [Tool system](docs/tool-system.md)
+- [Contributor guide](docs/agent-contributor-guide.md)
+- [Changelog](changelog.md)
 
 ## Contributing
 
-See the [Contributor Guide](docs/agent-contributor-guide.md) for code style, dependency rules, and testing conventions.
+See the [Contributor Guide](docs/agent-contributor-guide.md) for code style, dependency rules, and validation conventions.
+
+## License
+
+Apache-2.0

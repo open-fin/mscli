@@ -1,34 +1,39 @@
 [English](README.md) | 中文
 
-# MindSpore Model Agent
+# mscli
 
-MindSpore Model Agent 是一个面向 MindSpore 生态的、聚焦模型训练场景的 AI agent solution。它面向模型训练周边高频工程工作而设计，适用于那些仅靠通用代码生成还不够、还需要训练领域专项能力支持的场景。
+`mscli` 是一个用于构建和探索 AI 基础设施 agent 工作流的实验性 CLI harness。
 
-它由两个紧密相关的部分组成：
+它用于测试 agentic CLI 背后的运行时组件，包括模型提供方接入、工具执行、权限管理、上下文管理、会话、MCP server、skills、记忆和终端交互。
 
-- [`mindspore-skills`](https://gitcode.com/mindspore/mindspore-skills)：面向模型训练与调试任务的领域能力层，提供可复用的技能，包括 readiness 检查、failure diagnosis、accuracy analysis、performance analysis、model migration、algorithm adaptation 和 operator implementation。这些 skills 不仅可用于 MindSpore Model Agent，也可以与 Claude Code、OpenCode、Codex 等其他 agentic CLI 环境配合使用。
-- `mscli`：MindSpore Model Agent 的官方 CLI。它与相关 skills 有更好的集成，并针对模型训练场景进行了优化，提供更统一的端到端训练任务交互体验。
+`mscli` 不是 MindSpore 官方产品，也不是面向某个特定模型的专用 agent。它是一个持续演进的工程实验项目，接口和行为可能发生变化。
 
-## 最新版本
+## 可探索内容
 
-最新版本：`MindSpore Model Agent v0.1.5`。更新历史请参见 [changelog.md](changelog.md)。
+- 交互式终端 UI 与无头任务执行
+- OpenAI Chat Completions、OpenAI Responses 和 Anthropic 兼容提供方
+- 带上下文压缩的 ReAct 风格模型/工具循环
+- 受权限和路径策略约束的文件系统与 shell 工具
+- 持久化会话、恢复、回放和文件型记忆
+- MCP server 发现与工具执行
+- 内置和动态加载的 skills
+- 大型工具结果的 artifact 与调试工作流
 
-亮点包括：
+当前运行流程和包边界请参阅[架构文档](docs/arch.md)。
 
-- `[MCP]` 新增端到端 MCP 支持，包括项目审批、stdio / HTTP 传输、工具发现、生命周期控制与断线重连。
-- `[记忆]` 新增基于 `MEMORY.md` 和项目 `MSCLI.md` 的文件型自动记忆，以及 `/init` 和运行时推理强度调节。
-- `[CLI]` 新增无头 `exec` 工作流和会话恢复提示，支持脚本与 CI 使用场景。
-- `[工具]` 新增外部路径策略、能力元数据、标准化结果状态、生命周期事件与大结果 artifact 持久化。
-- `[skills]` 同步最新内置 MindSpore skills，并通过独立的 ACLNN 和自定义算子 builder 扩展算子开发能力。
-- `[安全]` 加固权限提示、shell 命令过滤、安全命令分类与更新二进制完整性校验。
+## 项目状态
 
-## MindSpore CLI
+当前最新 tag 为 `v0.1.5`。版本历史请参阅 [changelog.md](changelog.md)。
 
-MindSpore CLI 是 MindSpore Model Agent 的官方端到端交互入口。它面向训练任务工作流提供统一的 CLI 体验，并与方案背后的相关 skills 做更紧密的集成。
+请将 `mscli` 视为实验性软件：
 
-## Installation
+- 批准命令前检查工具权限。
+- `exec`、`fix` 和 `diagnose` 会启用无人值守执行，请谨慎使用。
+- 如果依赖尚未稳定的接口，请固定版本。
 
-### 脚本安装
+## 安装
+
+### 使用脚本安装
 
 ```bash
 curl -fsSL https://api.gitcode.com/api/v5/repos/mindspore/mscli/raw/scripts/install.sh?ref=main | bash
@@ -36,16 +41,16 @@ curl -fsSL https://api.gitcode.com/api/v5/repos/mindspore/mscli/raw/scripts/inst
 
 ### 从源码构建
 
-需要 Go 1.24.2+：
+需要 Go 1.24.2 或更高版本。
 
 ```bash
-git clone https://gitcode.com/mindspore/mscli.git
+git clone https://github.com/open-fin/mscli.git
 cd mscli
 go build -o mscli ./cmd/mscli
-./mscli
+./mscli --help
 ```
 
-## Quick Start
+## 快速开始
 
 ### 使用 Kimi Code Plan
 
@@ -69,11 +74,63 @@ export MSCLI_MODEL=deepseek-v4-pro
 mscli
 ```
 
-## Documentation
+### 使用其他兼容提供方
+
+```bash
+export MSCLI_PROVIDER=<openai-completion|openai-responses|anthropic>
+export MSCLI_BASE_URL=<provider-base-url>
+export MSCLI_API_KEY=<your-api-key>
+export MSCLI_MODEL=<model-name>
+
+mscli
+```
+
+## 使用方式
+
+启动交互式终端界面：
+
+```bash
+mscli
+```
+
+以无头模式执行自由文本任务：
+
+```bash
+mscli exec "inspect this repository"
+```
+
+常用命令：
+
+```text
+mscli resume [sess_xxx]
+mscli replay [sess_xxx|trajectory.json|trajectory.jsonl]
+mscli diagnose <problem>
+mscli fix <problem>
+mscli exec <task>
+```
+
+运行 `mscli --help` 或对子命令使用 `--help`，可查看当前命令界面。
+
+## Skills
+
+`mscli` 提供 skill 加载机制，当前会在构建时内置一组面向基础设施场景的 skills。
+
+[ms-skills](https://github.com/open-fin/ms-skills) 是一个独立仓库，包含 AI 基础设施相关的 skill 示例和可复用模式。
+
+两个仓库可以独立使用。它们是相关的实验项目，而不是同一个产品的组成部分。
+
+## 文档
 
 - [架构](docs/arch.md)
+- [MCP](docs/mcp.md)
+- [工具系统](docs/tool-system.md)
 - [贡献者指南](docs/agent-contributor-guide.md)
+- [变更记录](changelog.md)
 
-## Contributing
+## 贡献
 
-请参阅 [贡献者指南](docs/agent-contributor-guide.md) 了解代码风格、依赖规则和测试规范。
+代码风格、依赖规则和验证规范请参阅[贡献者指南](docs/agent-contributor-guide.md)。
+
+## 许可证
+
+Apache-2.0
